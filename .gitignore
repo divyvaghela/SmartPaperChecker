@@ -1,0 +1,17 @@
+# Virtual Environment & Python Cache
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+backend/temp_*.png
+
+# Environment Variables (Keep API Key Secret!)
+backend/.env
+.env
+
+# Node & Frontend
+frontend/node_modules/
+frontend/dist/
+
+# OS Files
+.DS_Store
+Thumbs.db

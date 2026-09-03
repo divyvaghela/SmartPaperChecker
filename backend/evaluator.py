@@ -16,17 +16,16 @@ if not api_key:
 client = genai.Client(api_key=api_key)
 
 def quick_compress_image(image_bytes: bytes) -> bytes:
-    """ઇમેજ ઓપ્ટિમાઇઝ કરે છે જેથી ઝડપથી ટ્રાન્સફર અને પ્રોસેસ થાય."""
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
     h, w = img.shape[:2]
-    max_dim = 1024
+    max_dim = 800  # પ્રોસેસિંગ સ્પીડ વધારવા માટે
     if max(h, w) > max_dim:
         scale = max_dim / max(h, w)
         img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
         
-    _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 75])
     return buffer.tobytes()
 
 def evaluate_paper(image_bytes: bytes, question: str, model_answer: str, max_marks: float) -> dict:

@@ -9,6 +9,7 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from evaluator import evaluate_paper
 from database import submissions_collection
+from config import upload_image_to_cloud
 
 app = FastAPI(title="SmartPaperChecker API")
 
@@ -49,6 +50,10 @@ async def evaluate_single_paper(
             executor, evaluate_paper, image_bytes, question, model_answer, max_marks
         )
 
+        # Cloudinary પર ઈમેજ અપલોડ
+        cloud_url = upload_image_to_cloud(image_bytes)
+        result["image_url"] = cloud_url
+
         # MongoDB સેવિંગ વિથ ફોલબેક
         try:
             submission_doc = {
@@ -58,6 +63,7 @@ async def evaluate_single_paper(
                 "question": question,
                 "model_answer": model_answer,
                 "max_marks": max_marks,
+                "image_url": cloud_url,
                 "obtained_marks": result.get("obtained_marks", 0.0),
                 "evaluation_status": result.get("evaluation_status", "PENDING"),
                 "extracted_text": result.get("extracted_text", ""),
@@ -80,11 +86,13 @@ def _process_one_file(idx: int, filename: str, image_bytes: bytes, question: str
     student_id = f"Roll_{101 + idx}"
     try:
         eval_result = evaluate_paper(image_bytes, question, model_answer, max_marks)
+        cloud_url = upload_image_to_cloud(image_bytes)
         return {
             "student_id": student_id,
             "student_name": f"Student {101 + idx}",
             "filename": filename,
             "subject": subject,
+            "image_url": cloud_url,
             "status": "Success",
             **eval_result
         }
@@ -94,6 +102,7 @@ def _process_one_file(idx: int, filename: str, image_bytes: bytes, question: str
             "student_name": f"Student {101 + idx}",
             "filename": filename,
             "subject": subject,
+            "image_url": "",
             "status": "Failed",
             "error": str(e),
             "obtained_marks": 0.0,
@@ -142,6 +151,7 @@ async def evaluate_batch_papers(
                     "question": question,
                     "model_answer": model_answer,
                     "max_marks": max_marks,
+                    "image_url": r.get("image_url", ""),
                     "obtained_marks": r.get("obtained_marks", 0.0),
                     "evaluation_status": r.get("evaluation_status", "ERROR"),
                     "extracted_text": r.get("extracted_text", ""),

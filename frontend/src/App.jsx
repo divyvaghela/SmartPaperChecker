@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Upload, AlertCircle, Award, FileText, Download, Layers, 
-  UserCheck, BarChart3, Clock, CheckCircle2, RefreshCw, Edit3, ShieldCheck
+  UserCheck, BarChart3, Clock, CheckCircle2, RefreshCw, Edit3, ShieldCheck, ExternalLink
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { toPng } from 'html-to-image';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('single'); // 'single' | 'batch' | 'analytics'
+  const [activeTab, setActiveTab] = useState('single');
 
   // Single mode state
   const [studentName, setStudentName] = useState('Rahul Sharma');
@@ -214,14 +214,15 @@ export default function App() {
 
   const exportCSV = () => {
     if (batchResults.length === 0) return;
-    const headers = ['Student ID', 'File Name', 'Obtained Marks', 'Max Marks', 'Status', 'Feedback'];
+    const headers = ['Student ID', 'File Name', 'Obtained Marks', 'Max Marks', 'Status', 'Feedback', 'Image URL'];
     const rows = batchResults.map((r) => [
       r.student_id,
       `"${r.filename}"`,
       r.obtained_marks,
       r.max_marks,
       r.evaluation_status,
-      `"${(r.teacher_feedback || '').replace(/"/g, '""')}"`
+      `"${(r.teacher_feedback || '').replace(/"/g, '""')}"`,
+      `"${r.image_url || ''}"`
     ]);
 
     const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
@@ -458,6 +459,19 @@ export default function App() {
                         </ul>
                       </div>
                     )}
+
+                    {result.image_url && (
+                      <div className="pt-2">
+                        <a
+                          href={result.image_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" /> ક્લાઉડ પર સાચવેલી મૂળ આન્સર-શીટ જુઓ
+                        </a>
+                      </div>
+                    )}
                   </div>
 
                   {/* Teacher Override & Audit Controls */}
@@ -582,6 +596,7 @@ export default function App() {
                       <th className="p-3">ફાઇલ નામ</th>
                       <th className="p-3">મેળવેલા ગુણ</th>
                       <th className="p-3">સ્ટેટસ</th>
+                      <th className="p-3">મૂળ શીટ</th>
                       <th className="p-3">શિક્ષક ટિપ્પણી</th>
                     </tr>
                   </thead>
@@ -598,6 +613,13 @@ export default function App() {
                           }`}>
                             {r.evaluation_status}
                           </span>
+                        </td>
+                        <td className="p-3">
+                          {r.image_url ? (
+                            <a href={r.image_url} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline font-semibold">
+                              જુઓ ↗
+                            </a>
+                          ) : '-'}
                         </td>
                         <td className="p-3 text-slate-700">{r.teacher_feedback}</td>
                       </tr>
@@ -665,11 +687,12 @@ export default function App() {
                   <table className="w-full text-left text-sm text-slate-600">
                     <thead className="bg-slate-50 text-slate-700 text-xs font-bold uppercase border-b">
                       <tr>
-                        <th className="p-3">વિદ્યાર્થી</th>
+                        <th className="p-3">વિદ્યાર્થી or વિદ્યાર્થીni</th>
                         <th className="p-3">રોલ નં</th>
                         <th className="p-3">વિષય</th>
                         <th className="p-3">ગુણ</th>
                         <th className="p-3">સ્ટેટસ</th>
+                        <th className="p-3">આન્સર-શીટ</th>
                         <th className="p-3">તારીખ / સમય</th>
                       </tr>
                     </thead>
@@ -687,6 +710,20 @@ export default function App() {
                             }`}>
                               {sub.evaluation_status}
                             </span>
+                          </td>
+                          <td className="p-3">
+                            {sub.image_url ? (
+                              <a
+                                href={sub.image_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 underline inline-flex items-center gap-1"
+                              >
+                                ઓરિજિનલ પેપર <ExternalLink className="w-3 h-3" />
+                              </a>
+                            ) : (
+                              <span className="text-slate-400 text-xs">-</span>
+                            )}
                           </td>
                           <td className="p-3 text-slate-400">
                             {sub.created_at ? new Date(sub.created_at).toLocaleString('gu-IN') : '-'}

@@ -1,4 +1,6 @@
 import os
+import json
+import base64
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
@@ -7,7 +9,7 @@ from bson import ObjectId
 from pydantic import BaseModel
 from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from evaluator import evaluate_paper
+from evaluator import evaluate_paper, evaluate_multi_question_paper, evaluate_supplementary_exam
 from database import submissions_collection, users_collection
 from config import upload_image_to_cloud
 from auth import (
@@ -27,6 +29,33 @@ app.add_middleware(
 
 executor = ThreadPoolExecutor(max_workers=5)
 
+def safe_upload_image(img_bytes: bytes) -> str:
+    # 1. Cloudinary પર મોકલવાનો પ્રયાસ
+    try:
+        url = upload_image_to_cloud(img_bytes)
+        if url and isinstance(url, str) and url.strip().startswith("http"):
+            return url.strip()
+    except Exception as e:
+        print(f"[Cloudinary Warning]: {e}")
+    
+    # 2. જો Cloudinary ફેલ થાય તો કમ્પ્રેસ કરીને Base64 ડેટા URL આપો
+    try:
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is not None:
+            h, w = img.shape[:2]
+            if max(h, w) > 900:
+                scale = 900 / max(h, w)
+                img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+            _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            b64 = base64.b64encode(buffer.tobytes()).decode('utf-8')
+            return f"data:image/jpeg;base64,{b64}"
+    except Exception as cv_err:
+        print(f"[Compress Error]: {cv_err}")
+
+    b64 = base64.b64encode(img_bytes).decode('utf-8')
+    return f"data:image/jpeg;base64,{b64}"  
+
 class UpdateSubmissionPayload(BaseModel):
     submission_id: str
     obtained_marks: float
@@ -37,8 +66,8 @@ class RegisterPayload(BaseModel):
     name: str
     email: str
     password: str
-    role: str = "TEACHER"  # "ADMIN" | "TEACHER" | "STUDENT"
-    roll_no: Optional[str] = None  # For students
+    role: str = "TEACHER"
+    roll_no: Optional[str] = None
 
 class LoginPayload(BaseModel):
     email: str
@@ -115,7 +144,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         }
     }
 
-# --- Paper Evaluation Endpoints ---
+# --- Single Evaluation Endpoint ---
 @app.post("/api/evaluate")
 async def evaluate_single_paper(
     file: UploadFile = File(...),
@@ -133,11 +162,9 @@ async def evaluate_single_paper(
             executor, evaluate_paper, image_bytes, question, model_answer, max_marks
         )
 
-        # Cloudinary પર ઈમેજ અપલોડ
-        cloud_url = upload_image_to_cloud(image_bytes)
+        cloud_url = await loop.run_in_executor(executor, safe_upload_image, image_bytes)
         result["image_url"] = cloud_url
 
-        # MongoDB સેવિંગ વિથ ફોલબેક
         try:
             submission_doc = {
                 "student_name": student_name,
@@ -159,17 +186,127 @@ async def evaluate_single_paper(
                 inserted = await submissions_collection.insert_one(submission_doc)
                 result["submission_id"] = str(inserted.inserted_id)
         except Exception as db_err:
-            print(f"[DB Warning] ડેટાબેઝ સેવ સ્કીપ થયું: {db_err}")
+            print(f"[DB Warning] સેવ સ્કીપ થયું: {db_err}")
 
         return {"success": True, "data": result}
     except Exception as e:
         return {"success": False, "detail": str(e)}
 
+# --- Multi-Question Exam Evaluation Endpoint ---
+@app.post("/api/evaluate-multi")
+async def evaluate_multi_exam(
+    file: UploadFile = File(...),
+    student_name: str = Form("Rahul Sharma"),
+    roll_no: str = Form("101"),
+    subject: str = Form("Computer Science"),
+    exam_title: str = Form("Unit Test 1"),
+    questions_json: str = Form(...)
+):
+    try:
+        image_bytes = await file.read()
+        questions_list = json.loads(questions_json)
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            executor, evaluate_multi_question_paper, image_bytes, questions_list
+        )
+
+        cloud_url = await loop.run_in_executor(executor, safe_upload_image, image_bytes)
+        result["image_url"] = cloud_url
+
+        try:
+            if submissions_collection is not None:
+                doc = {
+                    "student_name": student_name,
+                    "roll_no": roll_no,
+                    "subject": subject,
+                    "exam_title": exam_title,
+                    "is_multi_question": True,
+                    "questions_evaluation": result.get("questions_evaluation", []),
+                    "obtained_marks": result.get("total_obtained_marks", 0.0),
+                    "max_marks": result.get("total_max_marks", 0.0),
+                    "evaluation_status": result.get("overall_status", "PARTIAL"),
+                    "teacher_feedback": result.get("overall_feedback", ""),
+                    "image_url": cloud_url,
+                    "extracted_text": result.get("extracted_overall_text", ""),
+                    "is_verified": False,
+                    "created_at": datetime.utcnow()
+                }
+                inserted = await submissions_collection.insert_one(doc)
+                result["submission_id"] = str(inserted.inserted_id)
+        except Exception as db_err:
+            print(f"[DB Warning] Multi Exam સેવ સ્કીપ: {db_err}")
+
+        return {"success": True, "data": result}
+    except Exception as e:
+        return {"success": False, "detail": str(e)}
+
+# --- Multi-Page Supplementary Evaluation Endpoint ---
+@app.post("/api/evaluate-supplementary")
+async def evaluate_supplementary(
+    files: List[UploadFile] = File(...),
+    student_name: str = Form("Student"),
+    roll_no: str = Form("101"),
+    subject: str = Form("General"),
+    exam_payload_json: str = Form(...)
+):
+    try:
+        images_bytes = []
+        for file in files:
+            b = await file.read()
+            images_bytes.append(b)
+
+        loop = asyncio.get_event_loop()
+
+        # તમામ ઈમેજોનું ક્લાઉડ / Base64 અપલોડિંગ પેરેલલ કરવું
+        upload_tasks = [
+            loop.run_in_executor(executor, safe_upload_image, img_b)
+            for img_b in images_bytes
+        ]
+        cloud_urls = await asyncio.gather(*upload_tasks)
+
+        exam_payload = json.loads(exam_payload_json)
+
+        result = await loop.run_in_executor(
+            executor, evaluate_supplementary_exam, images_bytes, exam_payload
+        )
+
+        result["pages_urls"] = cloud_urls
+
+        try:
+            if submissions_collection is not None:
+                doc = {
+                    "student_name": student_name,
+                    "roll_no": roll_no,
+                    "subject": subject,
+                    "exam_title": exam_payload.get("exam_title", "Semester Exam"),
+                    "is_supplementary": True,
+                    "pages_count": len(files),
+                    "pages_urls": cloud_urls,
+                    "sections_evaluation": result.get("sections_evaluation", []),
+                    "obtained_marks": result.get("total_obtained_marks", 0.0),
+                    "max_marks": result.get("total_max_marks", 0.0),
+                    "evaluation_status": result.get("overall_status", "CORRECT"),
+                    "teacher_feedback": result.get("overall_summary", ""),
+                    "is_verified": False,
+                    "created_at": datetime.utcnow()
+                }
+                inserted = await submissions_collection.insert_one(doc)
+                result["submission_id"] = str(inserted.inserted_id)
+        except Exception as db_err:
+            print(f"[DB Warning] Supplementary સેવ સ્કીપ: {db_err}")
+
+        return {"success": True, "data": result}
+    except Exception as e:
+        print(f"[Supplementary Error]: {e}")
+        return {"success": False, "detail": str(e)}
+
+# --- Batch Mode Processing ---
 def _process_one_file(idx: int, filename: str, image_bytes: bytes, question: str, model_answer: str, max_marks: float, subject: str):
     student_id = f"Roll_{101 + idx}"
     try:
         eval_result = evaluate_paper(image_bytes, question, model_answer, max_marks)
-        cloud_url = upload_image_to_cloud(image_bytes)
+        cloud_url = safe_upload_image(image_bytes)
         return {
             "student_id": student_id,
             "student_name": f"Student {101 + idx}",
@@ -222,7 +359,6 @@ async def evaluate_batch_papers(
 
     results = await asyncio.gather(*tasks)
 
-    # MongoDB માં બેચ રેકોર્ડ્સ સ્ટોર કરવા
     try:
         if submissions_collection is not None:
             docs_to_insert = []

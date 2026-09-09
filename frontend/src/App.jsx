@@ -2,13 +2,17 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Upload, AlertCircle, Award, FileText, Download, Layers, 
   UserCheck, BarChart3, Clock, CheckCircle2, RefreshCw, Edit3, 
-  ShieldCheck, ExternalLink, LogIn, LogOut, User, Lock, Mail, ShieldAlert
+  ShieldCheck, ExternalLink, LogIn, LogOut, User, Lock, Mail, 
+  PlusCircle, Trash2, ListChecks, BookOpen, Images, FileSpreadsheet, Eye
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { toPng } from 'html-to-image';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('single');
+  const [activeTab, setActiveTab] = useState('supplementary');
+
+  // --- Modal State for Viewing Uploaded Pages ---
+  const [selectedImageModal, setSelectedImageModal] = useState(null);
 
   // --- Auth State ---
   const [currentUser, setCurrentUser] = useState(() => {
@@ -17,29 +21,68 @@ export default function App() {
   });
   const [token, setToken] = useState(() => localStorage.getItem('paper_checker_token') || '');
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
+  const [authMode, setAuthMode] = useState('login');
   const [authLoading, setAuthLoading] = useState(false);
 
-  // Auth Form fields
+  // Auth Form
   const [authName, setAuthName] = useState('');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
-  const [authRole, setAuthRole] = useState('TEACHER'); // 'TEACHER' | 'ADMIN' | 'STUDENT'
+  const [authRole, setAuthRole] = useState('TEACHER');
   const [authRollNo, setAuthRollNo] = useState('');
 
-  // --- Single Evaluation State ---
+  // --- Supplementary Multi-Page Exam Builder State ---
+  const [examTitle, setExamTitle] = useState('Mid-Term Examination 2026');
+  const [subject, setSubject] = useState('Computer Science');
   const [studentName, setStudentName] = useState('Rahul Sharma');
   const [rollNo, setRollNo] = useState('101');
-  const [subject, setSubject] = useState('Computer Science');
-  const [question, setQuestion] = useState('કમ્પ્યુટરના મુખ્ય ઘટકો (Components) કયા છે?');
-  const [modelAnswer, setModelAnswer] = useState('મુખ્ય ઘટકોમાં ઇનપુટ ડિવાઇસ (કીબોર્ડ, માઉસ), CPU, આઉટપુટ ડિવાઇસ (મોનિટર, પ્રિન્ટર) અને સ્ટોરેજ ડિવાઇસ આવે છે.');
+
+  const [sections, setSections] = useState([
+    {
+      section_name: 'Section A (ટૂંકા પ્રશ્નો)',
+      questions: [
+        {
+          q_id: 'Q1',
+          question: 'કમ્પ્યુટરના મુખ્ય ઘટકો (Components) કયા છે?',
+          model_answer: 'ઇનપુટ ડિવાઇસ (કીબોર્ડ, માઉસ), CPU, આઉટપુટ ડિવાઇસ (મોનિટર), સ્ટોરેજ ડિવાઇસ.',
+          max_marks: 2
+        },
+        {
+          q_id: 'Q2',
+          question: 'RAM અને ROM વચ્ચેનો તફાવત જણાવો.',
+          model_answer: 'RAM અસ્થાયી (Volatile) છે જ્યારે ROM કાયમી (Non-Volatile) મેમરી છે.',
+          max_marks: 2
+        }
+      ]
+    },
+    {
+      section_name: 'Section B (વિસ્તૃત પ્રશ્નો)',
+      questions: [
+        {
+          q_id: 'Q3',
+          question: 'ઓપરેટિંગ સિસ્ટમની મુખ્ય જવાબદારીઓ સમજાવો.',
+          model_answer: 'પ્રોસેસ મેનેજમેન્ટ, મેમરી મેનેજમેન્ટ, ફાઇલ સિસ્ટમ કંટ્રોલ અને સિક્યોરિટી પૂરી પાડવી.',
+          max_marks: 5
+        }
+      ]
+    }
+  ]);
+
+  const [supplementaryFiles, setSupplementaryFiles] = useState([]);
+  const [supplementaryPreviews, setSupplementaryPreviews] = useState([]);
+  const [suppLoading, setSuppLoading] = useState(false);
+  const [suppResult, setSuppResult] = useState(null);
+
+  // --- Single Evaluation State (Legacy fallback) ---
+  const [question, setQuestion] = useState('કમ્પ્યુટરના મુખ્ય ઘટકો કયા છે?');
+  const [modelAnswer, setModelAnswer] = useState('ઇનપુટ, આઉટપુટ, સીપીયુ અને મેમરી.');
   const [maxMarks, setMaxMarks] = useState(5);
   const [imageFile, setImageFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
 
-  // Teacher Override & Verification state
+  // Single Audit
   const [isVerified, setIsVerified] = useState(false);
   const [editedMarks, setEditedMarks] = useState(0);
   const [editedFeedback, setEditedFeedback] = useState('');
@@ -56,6 +99,7 @@ export default function App() {
   const [historyLoading, setHistoryLoading] = useState(false);
 
   const reportRef = useRef(null);
+  const suppReportRef = useRef(null);
 
   // --- Auth Handlers ---
   const handleAuthSubmit = async (e) => {
@@ -88,7 +132,6 @@ export default function App() {
         setCurrentUser(data.user);
         setAuthModalOpen(false);
 
-        // If student logged in, auto fill their details
         if (data.user.role === 'STUDENT') {
           setStudentName(data.user.name);
           if (data.user.roll_no) setRollNo(data.user.roll_no);
@@ -124,7 +167,6 @@ export default function App() {
 
       if (analyticsData.success) setAnalytics(analyticsData.data);
       if (submissionsData.success) {
-        // If student, filter only their papers
         if (currentUser && currentUser.role === 'STUDENT') {
           const filtered = submissionsData.data.filter(
             (s) => s.roll_no === currentUser.roll_no || s.student_name.toLowerCase() === currentUser.name.toLowerCase()
@@ -147,24 +189,161 @@ export default function App() {
     }
   }, [activeTab, currentUser]);
 
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setImageFile(file);
-      setPreviewUrl(URL.createObjectURL(file));
+  // --- Dynamic Section & Question Builder Handlers ---
+  const addSection = () => {
+    setSections((prev) => [
+      ...prev,
+      {
+        section_name: `Section ${String.fromCharCode(65 + prev.length)}`,
+        questions: [
+          {
+            q_id: `Q${prev.reduce((acc, s) => acc + s.questions.length, 0) + 1}`,
+            question: '',
+            model_answer: '',
+            max_marks: 5
+          }
+        ]
+      }
+    ]);
+  };
+
+  const removeSection = (sIndex) => {
+    if (sections.length <= 1) {
+      alert('ઓછામાં ઓછો એક સેક્શન હોવો જરૂરી છે.');
+      return;
+    }
+    setSections((prev) => prev.filter((_, idx) => idx !== sIndex));
+  };
+
+  const updateSectionName = (sIndex, name) => {
+    setSections((prev) => {
+      const copy = [...prev];
+      copy[sIndex].section_name = name;
+      return copy;
+    });
+  };
+
+  const addQuestionToSection = (sIndex) => {
+    setSections((prev) => {
+      const copy = [...prev];
+      const totalQ = copy.reduce((acc, s) => acc + s.questions.length, 0) + 1;
+      copy[sIndex].questions.push({
+        q_id: `Q${totalQ}`,
+        question: '',
+        model_answer: '',
+        max_marks: 5
+      });
+      return copy;
+    });
+  };
+
+  const removeQuestionFromSection = (sIndex, qIndex) => {
+    setSections((prev) => {
+      const copy = [...prev];
+      if (copy[sIndex].questions.length <= 1) {
+        alert('દરેક સેક્શનમાં ઓછામાં ઓછો એક પ્રશ્ન હોવો જોઈએ.');
+        return prev;
+      }
+      copy[sIndex].questions = copy[sIndex].questions.filter((_, idx) => idx !== qIndex);
+      return copy;
+    });
+  };
+
+  const updateQuestion = (sIndex, qIndex, field, val) => {
+    setSections((prev) => {
+      const copy = [...prev];
+      copy[sIndex].questions[qIndex][field] = field === 'max_marks' ? (parseFloat(val) || 0) : val;
+      return copy;
+    });
+  };
+
+  // --- Multi-Page File Selection Handlers (Append Mode) ---
+  const handleSupplementaryFiles = (e) => {
+    const newFiles = Array.from(e.target.files || []);
+    if (newFiles.length > 0) {
+      setSupplementaryFiles((prev) => [...prev, ...newFiles]);
+      setSupplementaryPreviews((prev) => [
+        ...prev,
+        ...newFiles.map((f) => URL.createObjectURL(f))
+      ]);
     }
   };
 
-  const handleBatchFileChange = (e) => {
-    setBatchFiles(Array.from(e.target.files));
+  const removeSupplementaryFile = (idx) => {
+    setSupplementaryFiles((prev) => prev.filter((_, i) => i !== idx));
+    setSupplementaryPreviews((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const handleEvaluate = async () => {
+  // --- Evaluate Multi-Page Supplementary ---
+  const handleEvaluateSupplementary = async () => {
+    if (supplementaryFiles.length === 0) {
+      alert('કૃપા કરીને સપ્લીમેન્ટરીના પાના (૧ કે તેથી વધુ ફોટા) અપલોડ કરો.');
+      return;
+    }
+
+    setSuppLoading(true);
+    setSuppResult(null);
+
+    const formData = new FormData();
+    supplementaryFiles.forEach((file) => {
+      formData.append('files', file);
+    });
+
+    formData.append('student_name', studentName);
+    formData.append('roll_no', rollNo);
+    formData.append('subject', subject);
+
+    const examPayload = {
+      exam_title: examTitle,
+      subject: subject,
+      sections: sections
+    };
+    formData.append('exam_payload_json', JSON.stringify(examPayload));
+
+    try {
+      const res = await fetch('http://localhost:8000/api/evaluate-supplementary', {
+        method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        body: formData
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSuppResult(data.data);
+      } else {
+        alert('મૂલ્યાંકનમાં ખામી: ' + (data.detail || 'Failed'));
+      }
+    } catch (err) {
+      alert('સર્વર સાથે સંપર્ક ન થઈ શક્યો. ખાતરી કરો કે બેકએન્ડ ચાલુ છે.');
+    } finally {
+      setSuppLoading(false);
+    }
+  };
+
+  const downloadSupplementaryPDF = async () => {
+    if (!suppReportRef.current) return;
+    try {
+      const dataUrl = await toPng(suppReportRef.current, { cacheBust: true });
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+
+      const img = new Image();
+      img.src = dataUrl;
+      img.onload = () => {
+        const pdfHeight = (img.height * pdfWidth) / img.width;
+        pdf.addImage(dataUrl, 'PNG', 0, 0, pdfWidth, pdfHeight);
+        pdf.save(`${studentName.replace(/\s+/g, '_')}_Official_Marksheet.pdf`);
+      };
+    } catch (err) {
+      alert('PDF ડાઉનલોડ કરવામાં ક્ષતિ આવી.');
+    }
+  };
+
+  // --- Single Paper Legacy Handlers ---
+  const handleSingleEvaluate = async () => {
     if (!imageFile) {
       alert('કૃપા કરીને પેપરનો ફોટો અપલોડ કરો.');
       return;
     }
-
     setLoading(true);
     setResult(null);
     setIsVerified(false);
@@ -184,17 +363,16 @@ export default function App() {
         headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         body: formData,
       });
-
       const resData = await response.json();
       if (resData.success) {
         setResult(resData.data);
         setEditedMarks(resData.data.obtained_marks ?? 0);
         setEditedFeedback(resData.data.teacher_feedback ?? '');
       } else {
-        alert('મૂલ્યાંકનમાં ભૂલ આવી: ' + (resData.detail || 'Unknown Error'));
+        alert('ભૂલ: ' + (resData.detail || 'Error'));
       }
     } catch (err) {
-      alert('સર્વર સાથે કનેક્ટ ન થઈ શક્યું. ખાતરી કરો કે Python સર્વર ચાલુ છે.');
+      alert('સર્વર કનેક્શન ક્ષતિ.');
     } finally {
       setLoading(false);
     }
@@ -205,7 +383,6 @@ export default function App() {
       setIsVerified(true);
       return;
     }
-
     setVerifyLoading(true);
     const marksNum = parseFloat(editedMarks) || 0;
     const computedStatus = marksNum >= parseFloat(maxMarks) ? 'CORRECT' : marksNum > 0 ? 'PARTIAL' : 'INCORRECT';
@@ -224,7 +401,6 @@ export default function App() {
           evaluation_status: computedStatus
         })
       });
-
       const resData = await response.json();
       if (resData.success) {
         setIsVerified(true);
@@ -234,11 +410,9 @@ export default function App() {
           teacher_feedback: editedFeedback,
           evaluation_status: computedStatus
         }));
-      } else {
-        alert('સેવ કરવામાં એરર: ' + (resData.detail || 'Failed'));
       }
     } catch (err) {
-      alert('વેરિફિકેશન સેવ કરવામાં સમસ્યા આવી.');
+      alert('વેરિફિકેશન સેવ કરવામાં ક્ષતિ આવી.');
     } finally {
       setVerifyLoading(false);
     }
@@ -246,10 +420,9 @@ export default function App() {
 
   const handleBatchEvaluate = async () => {
     if (batchFiles.length === 0) {
-      alert('કૃપા કરીને ઓછામાં ઓછું એક પેપર પસંદ કરો.');
+      alert('કૃપા કરીને પેપર્સ પસંદ કરો.');
       return;
     }
-
     setBatchLoading(true);
     setBatchResults([]);
 
@@ -266,67 +439,27 @@ export default function App() {
         headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         body: formData,
       });
-
       const resData = await response.json();
       if (resData.success) {
         setBatchResults(resData.data);
-      } else {
-        alert('બેચ મૂલ્યાંકનમાં ભૂલ આવી.');
       }
     } catch (err) {
-      alert('બેચ સર્વર કનેક્શન એરર.');
+      alert('બેચ મૂલ્યાંકન નિષ્ફળ.');
     } finally {
       setBatchLoading(false);
     }
   };
 
-  const downloadPDF = async () => {
-    if (!reportRef.current) return;
-    try {
-      const dataUrl = await toPng(reportRef.current, { cacheBust: true });
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-
-      const img = new Image();
-      img.src = dataUrl;
-      img.onload = () => {
-        const pdfHeight = (img.height * pdfWidth) / img.width;
-        pdf.addImage(dataUrl, 'PNG', 0, 0, pdfWidth, pdfHeight);
-        pdf.save(`${studentName.replace(/\s+/g, '_')}_Verified_Report.pdf`);
-      };
-    } catch (err) {
-      alert('PDF ડાઉનલોડ કરવામાં સમસ્યા આવી.');
-    }
-  };
-
-  const exportCSV = () => {
-    if (batchResults.length === 0) return;
-    const headers = ['Student ID', 'File Name', 'Obtained Marks', 'Max Marks', 'Status', 'Feedback', 'Image URL'];
-    const rows = batchResults.map((r) => [
-      r.student_id,
-      `"${r.filename}"`,
-      r.obtained_marks,
-      r.max_marks,
-      r.evaluation_status,
-      `"${(r.teacher_feedback || '').replace(/"/g, '""')}"`,
-      `"${r.image_url || ''}"`
-    ]);
-
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Batch_Result_${subject}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  const totalCalculatedMax = sections.reduce(
+    (sum, sec) => sum + sec.questions.reduce((qSum, q) => qSum + (parseFloat(q.max_marks) || 0), 0),
+    0
+  );
 
   const isTeacherOrAdmin = !currentUser || currentUser.role === 'TEACHER' || currentUser.role === 'ADMIN';
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 p-6">
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         
         {/* Header */}
         <header className="mb-6 border-b border-slate-200 pb-4 flex flex-col md:flex-row justify-between items-center gap-4">
@@ -337,9 +470,17 @@ export default function App() {
 
           <div className="flex items-center gap-3">
             {/* Navigation Tabs */}
-            <div className="flex gap-1.5 bg-slate-200 p-1.5 rounded-xl">
+            <div className="flex flex-wrap gap-1.5 bg-slate-200 p-1.5 rounded-xl">
               {isTeacherOrAdmin && (
                 <>
+                  <button
+                    onClick={() => setActiveTab('supplementary')}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                      activeTab === 'supplementary' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <BookOpen className="w-4 h-4 text-indigo-600" /> એક્ઝામ & સપ્લીમેન્ટરી (Multi-Page)
+                  </button>
                   <button
                     onClick={() => setActiveTab('single')}
                     className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
@@ -368,7 +509,7 @@ export default function App() {
               </button>
             </div>
 
-            {/* User Auth Profile Badge / Login Button */}
+            {/* Auth Profile */}
             {currentUser ? (
               <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm">
                 <div className="text-left">
@@ -396,7 +537,349 @@ export default function App() {
           </div>
         </header>
 
-        {/* 1. Single Mode */}
+        {/* --- 1. Supplementary Multi-Page Exam Builder (Core Feature) --- */}
+        {activeTab === 'supplementary' && isTeacherOrAdmin && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            
+            {/* Left Column: Exam Schema & Multi-Page Supplementary Upload */}
+            <div className="lg:col-span-6 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+              <div className="flex justify-between items-center border-b pb-3">
+                <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800">
+                  <BookOpen className="w-5 h-5 text-indigo-600" /> પ્રશ્નપત્ર બિલ્ડર & સપ્લીમેન્ટરી ચેકિંગ
+                </h2>
+                <span className="text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full border border-indigo-200">
+                  કુલ ગુણ: {totalCalculatedMax}
+                </span>
+              </div>
+
+              {/* Exam Info */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">પરીક્ષાનું નામ</label>
+                  <input
+                    type="text"
+                    className="w-full border rounded-lg p-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500"
+                    value={examTitle}
+                    onChange={(e) => setExamTitle(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">વિષય</label>
+                  <input
+                    type="text"
+                    className="w-full border rounded-lg p-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500"
+                    value={subject}
+                    onChange={(e) => setSubject(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">વિદ્યાર્થીનું નામ</label>
+                  <input
+                    type="text"
+                    className="w-full border rounded-lg p-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500"
+                    value={studentName}
+                    onChange={(e) => setStudentName(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">રોલ નં</label>
+                  <input
+                    type="text"
+                    className="w-full border rounded-lg p-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500"
+                    value={rollNo}
+                    onChange={(e) => setRollNo(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Sections & Questions */}
+              <div className="space-y-4 pt-2">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                    સેક્શન્સ & પ્રશ્નોની રૂપરેખા (Sections: {sections.length})
+                  </h3>
+                  <button
+                    onClick={addSection}
+                    className="flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition cursor-pointer"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" /> + નવો સેક્શન ઉમેરો
+                  </button>
+                </div>
+
+                <div className="space-y-4 max-h-[420px] overflow-y-auto pr-1">
+                  {sections.map((sec, sIdx) => (
+                    <div key={sIdx} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                      <div className="flex justify-between items-center border-b pb-2">
+                        <input
+                          type="text"
+                          className="text-xs font-bold text-indigo-800 bg-white border rounded px-2 py-1 outline-none w-2/3"
+                          value={sec.section_name}
+                          onChange={(e) => updateSectionName(sIdx, e.target.value)}
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => addQuestionToSection(sIdx)}
+                            className="text-[11px] font-bold text-indigo-600 bg-white border border-indigo-200 px-2 py-0.5 rounded hover:bg-indigo-50 cursor-pointer"
+                          >
+                            + પ્રશ્ન
+                          </button>
+                          <button
+                            onClick={() => removeSection(sIdx)}
+                            className="text-slate-400 hover:text-rose-600 cursor-pointer"
+                            title="સેક્શન ડિલીટ"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Questions inside section */}
+                      <div className="space-y-2">
+                        {sec.questions.map((q, qIdx) => (
+                          <div key={qIdx} className="p-3 bg-white border border-slate-200 rounded-lg space-y-2">
+                            <div className="flex justify-between items-center">
+                              <input
+                                type="text"
+                                className="w-16 text-xs font-bold text-indigo-700 border rounded p-1"
+                                value={q.q_id}
+                                onChange={(e) => updateQuestion(sIdx, qIdx, 'q_id', e.target.value)}
+                              />
+                              <div className="flex items-center gap-2">
+                                <span className="text-[11px] font-semibold text-slate-500">ગુણ:</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  className="w-12 text-center text-xs font-bold border rounded p-1"
+                                  value={q.max_marks}
+                                  onChange={(e) => updateQuestion(sIdx, qIdx, 'max_marks', e.target.value)}
+                                />
+                                <button
+                                  onClick={() => removeQuestionFromSection(sIdx, qIdx)}
+                                  className="text-slate-300 hover:text-rose-500 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+
+                            <input
+                              type="text"
+                              placeholder="પ્રશ્ન વિગત..."
+                              className="w-full border rounded p-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500"
+                              value={q.question}
+                              onChange={(e) => updateQuestion(sIdx, qIdx, 'question', e.target.value)}
+                            />
+
+                            <textarea
+                              rows={2}
+                              placeholder="સાચો આદર્શ ઉત્તર (Model Answer / Rubric)..."
+                              className="w-full border rounded p-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500"
+                              value={q.model_answer}
+                              onChange={(e) => updateQuestion(sIdx, qIdx, 'model_answer', e.target.value)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Multi-Page Supplementary Upload */}
+              <div className="border-t pt-3 space-y-2">
+                <label className="block text-xs font-bold uppercase text-slate-700 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Images className="w-4 h-4 text-indigo-600" /> વિદ્યાર્થીની સપ્લીમેન્ટરી (તમામ પાના એકસાથે)
+                  </span>
+                  <span className="text-indigo-600 font-semibold text-xs">
+                    {supplementaryFiles.length} પેજ પસંદ કરેલ
+                  </span>
+                </label>
+
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  onChange={handleSupplementaryFiles}
+                  className="block w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 cursor-pointer"
+                />
+
+                {supplementaryPreviews.length > 0 && (
+                  <div className="grid grid-cols-4 gap-2 pt-2 max-h-36 overflow-y-auto">
+                    {supplementaryPreviews.map((url, idx) => (
+                      <div key={idx} className="relative group border rounded-lg overflow-hidden bg-slate-50">
+                        <img src={url} alt={`Page ${idx + 1}`} className="h-20 w-full object-cover" />
+                        <span className="absolute bottom-1 left-1 bg-black/70 text-white text-[9px] px-1 rounded font-bold">
+                          P{idx + 1}
+                        </span>
+                        <button
+                          onClick={() => removeSupplementaryFile(idx)}
+                          className="absolute top-1 right-1 bg-rose-600 text-white rounded-full p-0.5 opacity-80 hover:opacity-100 cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={handleEvaluateSupplementary}
+                disabled={suppLoading || supplementaryFiles.length === 0}
+                className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-xl hover:bg-indigo-700 transition flex justify-center items-center gap-2 disabled:bg-slate-400 cursor-pointer text-sm shadow-md"
+              >
+                {suppLoading ? 'AI આખી સપ્લીમેન્ટરી સ્કેન કરી રહ્યું છે...' : (
+                  <>
+                    <Upload className="w-4 h-4" /> આખી સપ્લીમેન્ટરી ચેક કરો (Non-Linear Scan)
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Right Column: Comprehensive Multi-Page Marksheet & Non-Linear Mapping */}
+            <div className="lg:col-span-6 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800">
+                  <Award className="w-5 h-5 text-indigo-600" /> એકેડેમિક ગુણાંક & પરીક્ષા રિપોર્ટ
+                </h2>
+                {suppResult && (
+                  <button
+                    onClick={downloadSupplementaryPDF}
+                    className="flex items-center gap-1.5 bg-emerald-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-emerald-700 transition cursor-pointer shadow-sm"
+                  >
+                    <Download className="w-3.5 h-3.5" /> PDF માર્કશીટ
+                  </button>
+                )}
+              </div>
+
+              {!suppResult && !suppLoading && (
+                <div className="text-center py-40 text-slate-400">
+                  <BookOpen className="w-12 h-12 mx-auto mb-2 opacity-30 text-indigo-400" />
+                  પ્રશ્નપત્ર તૈયાર કરી વિદ્યાર્થીની સપ્લીમેન્ટરીના પાના અપલોડ કરો.
+                </div>
+              )}
+
+              {suppLoading && (
+                <div className="text-center py-40 text-slate-500 animate-pulse">
+                  <RefreshCw className="w-10 h-10 animate-spin mx-auto mb-3 text-indigo-600" />
+                  <p className="font-semibold text-sm text-slate-700">સપ્લીમેન્ટરીના તમામ પાનાનું વિશ્લેષણ થઈ રહ્યું છે...</p>
+                  <p className="text-xs text-slate-400 mt-1">આડાઅવળા લખેલા જવાબો શોધીને પ્રશ્ન સાથે જોડાઈ રહ્યા છે.</p>
+                </div>
+              )}
+
+              {suppResult && (
+                <div ref={suppReportRef} className="space-y-4">
+                  
+                  {/* Overall Result Banner */}
+                  <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-xl flex justify-between items-center">
+                    <div>
+                      <p className="text-xs font-bold text-slate-500 uppercase">{studentName} (રોલ: {rollNo})</p>
+                      <h3 className="text-sm font-extrabold text-indigo-950">{examTitle} - {subject}</h3>
+                      <p className="text-[11px] text-slate-500 mt-0.5">કુલ પાના તપાસ્યા: {supplementaryFiles.length}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs font-bold uppercase text-indigo-600">મેળવેલા ગુણ</span>
+                      <div className="text-3xl font-black text-indigo-950">
+                        {suppResult.total_obtained_marks} / {suppResult.total_max_marks}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Sections Breakdown */}
+                  <div className="space-y-4 max-h-[460px] overflow-y-auto pr-1">
+                    {suppResult.sections_evaluation?.map((sec, sIdx) => (
+                      <div key={sIdx} className="border border-slate-200 rounded-xl p-3 bg-slate-50/50 space-y-3">
+                        <div className="font-bold text-xs text-indigo-900 border-b pb-1">
+                          {sec.section_name}
+                        </div>
+
+                        <div className="space-y-2">
+                          {sec.questions?.map((q, qIdx) => (
+                            <div key={qIdx} className="p-3 bg-white border border-slate-200 rounded-lg space-y-1.5">
+                              <div className="flex justify-between items-center text-xs">
+                                <span className="font-bold text-slate-800 flex items-center gap-2">
+                                  <span className="bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded text-[11px]">
+                                    {q.q_id}
+                                  </span>
+                                  {q.question}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded font-black ${
+                                  q.obtained_marks >= q.max_marks ? 'bg-emerald-100 text-emerald-800' :
+                                  q.obtained_marks > 0 ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+                                }`}>
+                                  {q.obtained_marks} / {q.max_marks}
+                                </span>
+                              </div>
+
+                              {q.page_reference && (
+                                <span className="inline-block text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-semibold">
+                                  સપ્લીમેન્ટરી સંદર્ભ: {q.page_reference}
+                                </span>
+                              )}
+
+                              {q.student_answer_snippet && (
+                                <div className="p-2 bg-slate-50 rounded text-xs text-slate-600">
+                                  <span className="font-bold text-slate-500">વિદ્યાર્થીનો જવાબ: </span>
+                                  {q.student_answer_snippet}
+                                </div>
+                              )}
+
+                              <div className="text-xs text-slate-700">
+                                <span className="font-semibold text-slate-500">શિક્ષક ટિપ્પણી: </span>
+                                {q.feedback}
+                              </div>
+
+                              {q.missing_points && q.missing_points.length > 0 && (
+                                <div className="text-[11px] text-amber-700 bg-amber-50/80 p-2 rounded">
+                                  <span className="font-bold">ખૂટતા મુદ્દાઓ: </span>
+                                  {q.missing_points.join(', ')}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Overall Feedback */}
+                  {suppResult.overall_summary && (
+                    <div className="p-3 bg-slate-50 border rounded-xl text-xs text-slate-700">
+                      <span className="font-bold text-slate-600 block mb-1">આખરી મૂલ્યાંકન સારાંશ:</span>
+                      {suppResult.overall_summary}
+                    </div>
+                  )}
+
+                  {/* View Supplementary Pages (In-App Modal Popup) */}
+                  <div className="pt-3 border-t flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-slate-600">મૂળ પાના તપાસો:</span>
+                    {(suppResult.pages_urls && suppResult.pages_urls.length > 0
+                      ? suppResult.pages_urls
+                      : supplementaryPreviews
+                    ).map((pageUrl, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => {
+                          const target = pageUrl || supplementaryPreviews[i];
+                          if (target) setSelectedImageModal(target);
+                        }}
+                        className="text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg inline-flex items-center gap-1 font-semibold cursor-pointer transition shadow-xs"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-indigo-600" /> Page {i + 1}
+                      </button>
+                    ))}
+                  </div>
+
+                </div>
+              )}
+            </div>
+
+          </div>
+        )}
+
+        {/* --- 2. Single Paper Evaluation Tab --- */}
         {activeTab === 'single' && isTeacherOrAdmin && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
@@ -469,20 +952,25 @@ export default function App() {
                 <input
                   type="file"
                   accept="image/*"
-                  onChange={handleImageChange}
+                  onChange={(e) => {
+                    const f = e.target.files[0];
+                    if (f) {
+                      setImageFile(f);
+                      setPreviewUrl(URL.createObjectURL(f));
+                    }
+                  }}
                   className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
                 />
               </div>
 
               {previewUrl && (
                 <div className="mt-2">
-                  <p className="text-xs text-slate-400 mb-1">પેપર પ્રિવ્યુ:</p>
                   <img src={previewUrl} alt="Paper Preview" className="max-h-36 rounded-lg border object-contain mx-auto" />
                 </div>
               )}
 
               <button
-                onClick={handleEvaluate}
+                onClick={handleSingleEvaluate}
                 disabled={loading}
                 className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-xl hover:bg-indigo-700 transition flex justify-center items-center gap-2 disabled:bg-slate-400 cursor-pointer"
               >
@@ -494,20 +982,12 @@ export default function App() {
               </button>
             </div>
 
-            {/* Evaluation Result Card */}
+            {/* Result */}
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-lg font-semibold flex items-center gap-2">
                   <Award className="w-5 h-5 text-indigo-600" /> મૂલ્યાંકન પરિણામ
                 </h2>
-                {result && (
-                  <button
-                    onClick={downloadPDF}
-                    className="flex items-center gap-1.5 bg-emerald-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-emerald-700 transition cursor-pointer"
-                  >
-                    <Download className="w-4 h-4" /> PDF રિપોર્ટ
-                  </button>
-                )}
               </div>
 
               {!result && !loading && (
@@ -521,25 +1001,6 @@ export default function App() {
               {result && (
                 <div className="space-y-4">
                   <div ref={reportRef} className="p-4 bg-white border border-slate-100 rounded-xl space-y-4">
-                    <div className="border-b pb-3 flex justify-between items-center text-xs text-slate-600">
-                      <div>
-                        <p><span className="font-bold">વિદ્યાર્થી:</span> {studentName}</p>
-                        <p><span className="font-bold">રોલ નં:</span> {rollNo}</p>
-                      </div>
-                      <div className="text-right">
-                        <p><span className="font-bold">વિષય:</span> {subject}</p>
-                        {isVerified ? (
-                          <span className="inline-flex items-center gap-1 mt-1 bg-emerald-100 text-emerald-800 text-[11px] px-2.5 py-0.5 rounded-full font-bold">
-                            <ShieldCheck className="w-3.5 h-3.5" /> Teacher Verified
-                          </span>
-                        ) : (
-                          <span className="inline-block mt-1 bg-amber-100 text-amber-800 text-[11px] px-2 py-0.5 rounded-full font-bold">
-                            AI Draft (Pending Review)
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
                     <div className="flex items-center justify-between p-4 bg-indigo-50 border border-indigo-100 rounded-xl">
                       <div>
                         <span className="text-xs font-bold uppercase tracking-wider text-indigo-600">મેળવેલા ગુણ</span>
@@ -547,62 +1008,25 @@ export default function App() {
                           {isVerified ? editedMarks : result.obtained_marks} / {result.max_marks}
                         </div>
                       </div>
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                        (isVerified ? (parseFloat(editedMarks) >= maxMarks ? 'CORRECT' : parseFloat(editedMarks) > 0 ? 'PARTIAL' : 'INCORRECT') : result.evaluation_status) === 'CORRECT' ? 'bg-green-100 text-green-700' :
-                        (isVerified ? (parseFloat(editedMarks) >= maxMarks ? 'CORRECT' : parseFloat(editedMarks) > 0 ? 'PARTIAL' : 'INCORRECT') : result.evaluation_status) === 'PARTIAL' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
-                      }`}>
-                        {isVerified ? (parseFloat(editedMarks) >= maxMarks ? 'CORRECT' : parseFloat(editedMarks) > 0 ? 'PARTIAL' : 'INCORRECT') : result.evaluation_status}
+                      <span className="px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700">
+                        {result.evaluation_status}
                       </span>
                     </div>
 
                     <div>
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">AI દ્વારા વંચાયેલું લખાણ</h3>
-                      <div className="p-3 bg-slate-50 border rounded-lg text-sm text-slate-700 whitespace-pre-wrap">{result.extracted_text || 'કોઈ લખાણ મળ્યું નથી'}</div>
-                    </div>
-
-                    <div>
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">શિક્ષક ટિપ્પણી / Feedback</h3>
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">શિક્ષક ટિપ્પણી</h3>
                       <p className="text-sm text-slate-700 bg-slate-50 p-3 rounded-lg border">
                         {isVerified ? editedFeedback : result.teacher_feedback}
                       </p>
                     </div>
-
-                    {result.missing_points && result.missing_points.length > 0 && (
-                      <div>
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-amber-600 mb-1">જવાબમાં ખૂટતા મુદ્દાઓ</h3>
-                        <ul className="space-y-1">
-                          {result.missing_points.map((pt, idx) => (
-                            <li key={idx} className="text-xs text-slate-600 flex items-start gap-2">
-                              <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                              <span>{pt}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {result.image_url && (
-                      <div className="pt-2">
-                        <a
-                          href={result.image_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" /> ક્લાઉડ પર સાચવેલી મૂળ આન્સર-શીટ જુઓ
-                        </a>
-                      </div>
-                    )}
                   </div>
 
-                  {/* Teacher Override & Audit Controls */}
                   <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
                       <Edit3 className="w-4 h-4 text-indigo-600" /> શિક્ષક રિવ્યુ & ઓવરરાઇડ (Audit)
                     </h3>
-
                     <div className="flex items-center justify-between gap-4">
-                      <label className="text-xs font-semibold text-slate-600">ગુણ સુધારો (Manual Marks):</label>
+                      <label className="text-xs font-semibold text-slate-600">ગુણ સુધારો:</label>
                       <input
                         type="number"
                         step="0.5"
@@ -616,31 +1040,26 @@ export default function App() {
                         className="w-24 border rounded-lg p-1.5 text-center font-bold text-slate-800 bg-white"
                       />
                     </div>
-
-                    <div>
-                      <label className="text-xs font-semibold text-slate-600 block mb-1">આખરી ફીડબેક સંપાદિત કરો:</label>
-                      <textarea
-                        rows={2}
-                        value={editedFeedback}
-                        onChange={(e) => {
-                          setEditedFeedback(e.target.value);
-                          setIsVerified(false);
-                        }}
-                        className="w-full border rounded-lg p-2 text-xs bg-white text-slate-800 outline-none focus:ring-1 focus:ring-indigo-500"
-                      />
-                    </div>
-
+                    <textarea
+                      rows={2}
+                      value={editedFeedback}
+                      onChange={(e) => {
+                        setEditedFeedback(e.target.value);
+                        setIsVerified(false);
+                      }}
+                      className="w-full border rounded-lg p-2 text-xs bg-white text-slate-800 outline-none"
+                    />
                     {!isVerified ? (
                       <button
                         onClick={handleVerifyAndFinalize}
                         disabled={verifyLoading}
-                        className="w-full bg-emerald-600 text-white font-semibold py-2.5 rounded-xl hover:bg-emerald-700 transition flex items-center justify-center gap-1.5 text-xs cursor-pointer disabled:bg-slate-400"
+                        className="w-full bg-emerald-600 text-white font-semibold py-2 rounded-xl hover:bg-emerald-700 transition text-xs cursor-pointer"
                       >
-                        <CheckCircle2 className="w-4 h-4" /> {verifyLoading ? 'સેવિંગ...' : 'માર્ક્સ કન્ફર્મ & સેવ કરો (Verify & Finalize)'}
+                        {verifyLoading ? 'સેવિંગ...' : 'માર્ક્સ કન્ફર્મ & સેવ કરો'}
                       </button>
                     ) : (
-                      <div className="p-2 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium rounded-lg text-center flex items-center justify-center gap-1.5">
-                        <ShieldCheck className="w-4 h-4 text-emerald-600" /> આ પરિણામ શિક્ષક દ્વારા પ્રમાણિત થઈ ગયું છે.
+                      <div className="p-2 bg-emerald-50 text-emerald-800 text-xs font-medium rounded-lg text-center">
+                        પ્રમાણિત થઈ ગયું છે.
                       </div>
                     )}
                   </div>
@@ -650,26 +1069,12 @@ export default function App() {
           </div>
         )}
 
-        {/* 2. Batch Mode */}
+        {/* --- 3. Batch Mode Tab --- */}
         {activeTab === 'batch' && isTeacherOrAdmin && (
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
-            <div className="flex justify-between items-center border-b pb-4">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
-                  <Layers className="w-5 h-5 text-indigo-600" /> આખા ક્લાસ માટે બેચ પેપર મૂલ્યાંકન
-                </h2>
-                <p className="text-xs text-slate-500">એકસાથે મલ્ટિપલ આન્સર-શીટ્સ અપલોડ કરો અને સામૂહિક પરિણામ મેળવો.</p>
-              </div>
-              {batchResults.length > 0 && (
-                <button
-                  onClick={exportCSV}
-                  className="flex items-center gap-1.5 bg-emerald-600 text-white text-xs font-medium px-4 py-2 rounded-lg hover:bg-emerald-700 transition cursor-pointer"
-                >
-                  <Download className="w-4 h-4" /> CSV ડાઉનલોડ કરો
-                </button>
-              )}
-            </div>
-
+            <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+              <Layers className="w-5 h-5 text-indigo-600" /> આખા ક્લાસ માટે બેચ પેપર મૂલ્યાંકન
+            </h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">પ્રશ્ન</label>
@@ -695,7 +1100,7 @@ export default function App() {
                   type="file"
                   multiple
                   accept="image/*"
-                  onChange={handleBatchFileChange}
+                  onChange={(e) => setBatchFiles(Array.from(e.target.files))}
                   className="block w-full text-xs text-slate-500 file:mr-2 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 mb-3"
                 />
                 <button
@@ -714,10 +1119,8 @@ export default function App() {
                   <thead className="bg-slate-50 text-slate-800 text-xs font-bold uppercase border-b">
                     <tr>
                       <th className="p-3">રોલ નં</th>
-                      <th className="p-3">ફાઇલ નામ</th>
                       <th className="p-3">મેળવેલા ગુણ</th>
                       <th className="p-3">સ્ટેટસ</th>
-                      <th className="p-3">મૂળ શીટ</th>
                       <th className="p-3">શિક્ષક ટિપ્પણી</th>
                     </tr>
                   </thead>
@@ -725,23 +1128,8 @@ export default function App() {
                     {batchResults.map((r, i) => (
                       <tr key={i} className="hover:bg-slate-50">
                         <td className="p-3 font-semibold text-indigo-700">{r.student_id}</td>
-                        <td className="p-3 text-slate-500 truncate max-w-xs">{r.filename}</td>
                         <td className="p-3 font-bold">{r.obtained_marks} / {r.max_marks}</td>
-                        <td className="p-3">
-                          <span className={`px-2 py-0.5 rounded font-bold ${
-                            r.evaluation_status === 'CORRECT' ? 'bg-green-100 text-green-700' :
-                            r.evaluation_status === 'PARTIAL' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
-                          }`}>
-                            {r.evaluation_status}
-                          </span>
-                        </td>
-                        <td className="p-3">
-                          {r.image_url ? (
-                            <a href={r.image_url} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline font-semibold">
-                              જુઓ ↗
-                            </a>
-                          ) : '-'}
-                        </td>
+                        <td className="p-3 font-bold">{r.evaluation_status}</td>
                         <td className="p-3 text-slate-700">{r.teacher_feedback}</td>
                       </tr>
                     ))}
@@ -752,7 +1140,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 3. Analytics & ERP History Dashboard */}
+        {/* --- 4. Analytics & ERP History Dashboard --- */}
         {activeTab === 'analytics' && (
           <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -768,7 +1156,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Metric KPI Cards (Only for Teacher / Admin) */}
             {isTeacherOrAdmin && analytics && (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
@@ -776,11 +1163,11 @@ export default function App() {
                   <p className="text-3xl font-extrabold text-indigo-600 mt-2">{analytics.total_papers}</p>
                 </div>
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                  <p className="text-xs font-bold uppercase text-slate-400">સરેરાશ માર્ક્સ (Class Average)</p>
+                  <p className="text-xs font-bold uppercase text-slate-400">સરેરાશ માર્ક્સ</p>
                   <p className="text-3xl font-extrabold text-slate-800 mt-2">{analytics.average_marks}</p>
                 </div>
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                  <p className="text-xs font-bold uppercase text-slate-400">સૌથી વધુ ગુણ (Highest)</p>
+                  <p className="text-xs font-bold uppercase text-slate-400">સૌથી વધુ ગુણ</p>
                   <p className="text-3xl font-extrabold text-emerald-600 mt-2">{analytics.highest_marks}</p>
                 </div>
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
@@ -794,7 +1181,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Submissions History Table */}
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
               <h3 className="text-md font-semibold text-slate-800 mb-4 flex items-center gap-2">
                 <Clock className="w-4 h-4 text-slate-500" /> 
@@ -812,11 +1198,10 @@ export default function App() {
                       <tr>
                         <th className="p-3">વિદ્યાર્થી</th>
                         <th className="p-3">રોલ નં</th>
-                        <th className="p-3">વિષય</th>
+                        <th className="p-3">વિષય / એક્ઝામ</th>
                         <th className="p-3">ગુણ</th>
-                        <th className="p-3">સ્ટેટસ</th>
-                        <th className="p-3">આન્સર-શીટ</th>
-                        <th className="p-3">તારીખ / સમય</th>
+                        <th className="p-3">પાના</th>
+                        <th className="p-3">તારીખ</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y text-xs">
@@ -824,32 +1209,47 @@ export default function App() {
                         <tr key={sub._id} className="hover:bg-slate-50">
                           <td className="p-3 font-semibold text-slate-800">{sub.student_name}</td>
                           <td className="p-3 text-indigo-600 font-medium">{sub.roll_no}</td>
-                          <td className="p-3">{sub.subject}</td>
+                          <td className="p-3">
+                            <span className="font-medium text-slate-800">{sub.subject}</span>
+                            {sub.exam_title && <span className="block text-[11px] text-slate-400">{sub.exam_title}</span>}
+                          </td>
                           <td className="p-3 font-bold">{sub.obtained_marks} / {sub.max_marks}</td>
-                          <td className="p-3">
-                            <span className={`px-2 py-0.5 rounded font-bold ${
-                              sub.evaluation_status === 'CORRECT' ? 'bg-green-100 text-green-700' :
-                              sub.evaluation_status === 'PARTIAL' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
-                            }`}>
-                              {sub.evaluation_status}
-                            </span>
-                          </td>
-                          <td className="p-3">
-                            {sub.image_url ? (
-                              <a
-                                href={sub.image_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 underline inline-flex items-center gap-1"
-                              >
-                                ઓરિજિનલ પેપર <ExternalLink className="w-3 h-3" />
-                              </a>
-                            ) : (
-                              <span className="text-slate-400 text-xs">-</span>
-                            )}
-                          </td>
-                          <td className="p-3 text-slate-400">
-                            {sub.created_at ? new Date(sub.created_at).toLocaleString('gu-IN') : '-'}
+<td className="p-3">
+  {Array.isArray(sub.pages_urls) && sub.pages_urls.filter(Boolean).length > 0 ? (
+    <div className="flex flex-wrap gap-1">
+      {sub.pages_urls.filter(Boolean).map((url, pIdx) => (
+        <button
+          key={pIdx}
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setSelectedImageModal(url);
+          }}
+          className="text-[11px] bg-indigo-50 hover:bg-indigo-200 text-indigo-700 border border-indigo-300 px-2 py-0.5 rounded font-bold inline-flex items-center gap-1 cursor-pointer transition shadow-xs active:scale-95"
+          title={`Page ${pIdx + 1} જુઓ`}
+        >
+          <Eye className="w-3 h-3 text-indigo-600" /> P{pIdx + 1}
+        </button>
+      ))}
+    </div>
+  ) : sub.image_url ? (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectedImageModal(sub.image_url);
+      }}
+      className="text-xs text-indigo-600 hover:text-indigo-800 underline inline-flex items-center gap-1 font-semibold cursor-pointer"
+    >
+      <Eye className="w-3 h-3" /> પેપર જુઓ
+    </button>
+  ) : (
+    <span className="text-slate-400 text-xs">-</span>
+  )}
+</td>                          <td className="p-3 text-slate-400">
+                            {sub.created_at ? new Date(sub.created_at).toLocaleDateString('gu-IN') : '-'}
                           </td>
                         </tr>
                       ))}
@@ -861,7 +1261,7 @@ export default function App() {
           </div>
         )}
 
-        {/* --- Authentication Modal (Login / Register) --- */}
+        {/* --- Authentication Modal --- */}
         {authModalOpen && (
           <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md p-6 relative">
@@ -990,6 +1390,39 @@ export default function App() {
           </div>
         )}
 
+        {/* --- In-App Full Image Modal (Lightbox Viewer) --- */}
+{/* Lightbox Viewer Modal */}
+{selectedImageModal && (
+  <div 
+    className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4"
+    onClick={() => setSelectedImageModal(null)}
+  >
+    <div 
+      className="bg-white rounded-2xl p-4 max-w-4xl w-full max-h-[90vh] flex flex-col relative shadow-2xl border border-slate-200"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex justify-between items-center pb-3 border-b">
+        <span className="text-sm font-bold text-slate-800 flex items-center gap-2">
+          <Eye className="w-4 h-4 text-indigo-600" /> ઓરિજિનલ પેપર પાનું
+        </span>
+        <button 
+          type="button"
+          onClick={() => setSelectedImageModal(null)}
+          className="text-slate-500 hover:text-rose-600 text-xl font-black px-2 py-1 rounded-lg cursor-pointer"
+        >
+          ✕
+        </button>
+      </div>
+      <div className="overflow-auto flex-1 p-2 text-center bg-slate-100 rounded-xl my-2">
+        <img 
+          src={selectedImageModal} 
+          alt="Answer Sheet Preview" 
+          className="max-h-[75vh] mx-auto object-contain rounded-lg border border-slate-300 shadow" 
+        />
+      </div>
+    </div>
+  </div>
+)}
       </div>
     </div>
   );

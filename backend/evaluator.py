@@ -18,14 +18,16 @@ client = genai.Client(api_key=api_key)
 def quick_compress_image(image_bytes: bytes) -> bytes:
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        return image_bytes
     
     h, w = img.shape[:2]
-    max_dim = 800  # પ્રોસેસિંગ સ્પીડ વધારવા માટે
+    max_dim = 1000
     if max(h, w) > max_dim:
         scale = max_dim / max(h, w)
         img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
         
-    _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 75])
+    _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
     return buffer.tobytes()
 
 def evaluate_paper(image_bytes: bytes, question: str, model_answer: str, max_marks: float) -> dict:
@@ -55,15 +57,11 @@ def evaluate_paper(image_bytes: bytes, question: str, model_answer: str, max_mar
     }}
     """
 
-    # માત્ર સક્રિય અને સપોર્ટેડ મોડેલ્સ
-    models_pool = ["gemini-3.6-flash", "gemini-3.1-pro-preview"]
-    
+    models_pool = ["gemini-3.6-flash", "gemini-3.1-pro-preview"]    
     last_err = None
     for model_id in models_pool:
-        # ટ્રાફિક સ્પાઇક (503) વખતે 2 વાર retry
         for attempt in range(2):
             try:
-                print(f"[{model_id}] પ્રયાસ {attempt + 1}...")
                 response = client.models.generate_content(
                     model=model_id,
                     contents=[
@@ -76,17 +74,175 @@ def evaluate_paper(image_bytes: bytes, question: str, model_answer: str, max_mar
                 )
                 
                 if response and response.text:
-                    result = json.loads(response.text.strip())
-                    print(f"[{model_id}] સફળતાપૂર્વક મૂલ્યાંકન થયું!")
-                    return result
+                    return json.loads(response.text.strip())
 
             except Exception as e:
                 last_err = e
                 err_str = str(e)
-                print(f"[{model_id}] ભૂલ: {err_str}")
+                print(f"[{model_id}] Single Eval Error: {err_str}")
                 if "503" in err_str or "UNAVAILABLE" in err_str:
-                    time.sleep(1.5)  # ટ્રાફિક હળવો થવા માટે સેકન્ડ રાહ જુઓ
+                    time.sleep(1.5)
                 else:
-                    break  # 404 કે અન્ય એરર હોય તો સીધા આગલા મોડેલ પર જાઓ
+                    break
 
-    raise RuntimeError(f"સર્વર હાલ વ્યસ્ત છે. કૃપા કરીને થોડીવાર પછી પ્રયાસ કરો: {last_err}")
+    raise RuntimeError(f"સર્વર હાલ વ્યસ્ત છે: {last_err}")
+
+def evaluate_multi_question_paper(image_bytes: bytes, questions_payload: list) -> dict:
+    compressed_img_bytes = quick_compress_image(image_bytes)
+
+    prompt = f"""
+    તમે એક તટસ્થ અને અનુભવી પરીક્ષક છો. વિદ્યાર્થીની આપેલી ઉત્તરવહીની ઇમેજમાં એકથી વધુ પ્રશ્નોના જવાબો લખેલા છે.
+
+    [પરીક્ષાના તમામ પ્રશ્નો અને મોડેલ આન્સર-કી]
+    {json.dumps(questions_payload, ensure_ascii=False, indent=2)}
+
+    [કાર્યવાહીની સૂચનાઓ]
+    1. વિદ્યાર્થીની ઉત્તરવહીમાંથી દરેક પ્રશ્નનો ઉત્તર શોધો (Q1, Q2, ક્રમ કે હેડિંગ પ્રમાણે).
+    2. દરેક પ્રશ્ન માટે સ્વતંત્ર ગુણ અને ફીડબેક આપો. જો કોઈ પ્રશ્ન ન લખ્યો હોય તો 0 ગુણ આપો.
+    3. સમગ્ર પેપરના કુલ ગુણ ગણીને આપો.
+
+    માત્ર શુદ્ધ JSON ફોર્મેટ આપો:
+    {{
+      "extracted_overall_text": "વિદ્યાર્થીની ઉત્તરવહીમાંથી વંચાયેલું સમગ્ર લખાણ",
+      "questions_evaluation": [
+        {{
+          "q_no": 1,
+          "question": "પ્રશ્નનું લખાણ",
+          "max_marks": 5.0,
+          "obtained_marks": 4.0,
+          "status": "CORRECT",
+          "student_answer_snippet": "વિદ્યાર્થીએ લખેલા ઉત્તરનો મુખ્ય અંશ",
+          "feedback": "પ્રશ્નવાર ટૂંકી ટિપ્પણી",
+          "missing_points": ["મુદ્દો ૧"]
+        }}
+      ],
+      "total_max_marks": 10.0,
+      "total_obtained_marks": 8.0,
+      "overall_status": "CORRECT",
+      "overall_feedback": "સમગ્ર ઉત્તરવહી વિશે શિક્ષકનો આખરી અભિપ્રાય"
+    }}
+    """
+
+    models_pool = ["gemini-3.6-flash", "gemini-3.1-pro-preview"]
+    last_err = None
+
+    for model_id in models_pool:
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=[
+                        types.Part.from_bytes(data=compressed_img_bytes, mime_type="image/jpeg"),
+                        prompt
+                    ],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
+                )
+                if response and response.text:
+                    return json.loads(response.text.strip())
+            except Exception as e:
+                last_err = e
+                err_str = str(e)
+                print(f"[{model_id}] Multi Eval Error: {err_str}")
+                if "503" in err_str or "UNAVAILABLE" in err_str:
+                    time.sleep(1.5)
+                else:
+                    break
+
+    total_max = sum(float(q.get("max_marks", 0)) for q in questions_payload)
+    return {
+        "extracted_overall_text": f"મૂલ્યાંકન કરવામાં સમસ્યા આવી: {str(last_err)}",
+        "questions_evaluation": [
+            {
+                "q_no": q.get("q_no", idx + 1),
+                "question": q.get("question", ""),
+                "max_marks": float(q.get("max_marks", 5)),
+                "obtained_marks": 0.0,
+                "status": "ERROR",
+                "student_answer_snippet": "-",
+                "feedback": f"API ક્ષતિ: {str(last_err)}",
+                "missing_points": []
+            } for idx, q in enumerate(questions_payload)
+        ],
+        "total_max_marks": total_max,
+        "total_obtained_marks": 0.0,
+        "overall_status": "INCORRECT",
+        "overall_feedback": "કૃપા કરીને ફરીથી પ્રયાસ કરો."
+    }
+
+def evaluate_supplementary_exam(images_bytes_list: list[bytes], exam_payload: dict) -> dict:
+    """
+    મલ્ટી-પેજ સપ્લીમેન્ટરી અને આડાઅવળા લખેલા જવાબોનું મૂલ્યાંકન
+    """
+    compressed_parts = []
+    for img_b in images_bytes_list:
+        comp_b = quick_compress_image(img_b)
+        compressed_parts.append(types.Part.from_bytes(data=comp_b, mime_type="image/jpeg"))
+
+    prompt = f"""
+તમે યુનિવર્સિટી કક્ષાના મુખ્ય પરીક્ષક (Head Academic Examiner) છો.
+વિદ્યાર્થીએ એક કે તેથી વધુ પાનાની સપ્લીમેન્ટરી (ઉત્તરવહી) માં જવાબો લખેલા છે.
+
+[મહત્વપૂર્ણ નિયમો]:
+1. વિદ્યાર્થીએ જવાબો આડાઅવળા (દા.ત. પહેલાં Q3, પછી Q1, અથવા Section B પહેલાં) લખ્યા હોઈ શકે છે.
+2. એક જ પ્રશ્નનો જવાબ બે પાના વચ્ચે ફેલાયેલો પણ હોઈ શકે છે.
+3. તમામ પાનાનું ધ્યાનથી નિરીક્ષણ કરીને નક્કી કરો કે કયો જવાબ કયા પ્રશ્નનો છે.
+4. પ્રશ્નપત્રમાં દર્શાવેલા દરેક પ્રશ્નનું સાચા મોડેલ આન્સર સાથે સ્વતંત્ર મૂલ્યાંકન કરો. જો ઉત્તરવહીમાં ક્યાંય જવાબ ન મળે તો જ 0 ગુણ આપવા.
+
+[પ્રશ્નપત્ર, સેક્શન્સ અને આદર્શ આન્સર-કી]:
+{json.dumps(exam_payload, ensure_ascii=False, indent=2)}
+
+માત્ર શુદ્ધ JSON ફોર્મેટ આપો:
+{{
+  "overall_summary": "વિદ્યાર્થીના સમગ્ર પેપરનું આકલન",
+  "total_max_marks": 0.0,
+  "total_obtained_marks": 0.0,
+  "overall_status": "CORRECT",
+  "sections_evaluation": [
+    {{
+      "section_name": "Section A",
+      "questions": [
+        {{
+          "q_id": "Q1",
+          "question": "પ્રશ્નનું લખાણ",
+          "found_in_supplementary": true,
+          "page_reference": "Page 1",
+          "student_answer_snippet": "વિદ્યાર્થીએ લખેલા લખાણનો સારાંશ",
+          "max_marks": 2.0,
+          "obtained_marks": 2.0,
+          "status": "CORRECT",
+          "feedback": "પ્રશ્નવાર ટૂંકી ટિપ્પણી",
+          "missing_points": []
+        }}
+      ]
+    }}
+  ]
+}}
+"""
+
+    models_pool = ["gemini-3.6-flash", "gemini-3.1-pro-preview"]
+    last_err = None
+
+    for model_id in models_pool:
+        for attempt in range(2):
+            try:
+                contents = [prompt] + compressed_parts
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
+                )
+                if response and response.text:
+                    return json.loads(response.text.strip())
+            except Exception as e:
+                last_err = e
+                print(f"[{model_id}] Supplementary Eval Error: {e}")
+                if "503" in str(e) or "UNAVAILABLE" in str(e):
+                    time.sleep(1.5)
+                else:
+                    break
+
+    raise RuntimeError(f"સપ્લીમેન્ટરી મૂલ્યાંકનમાં ક્ષતિ આવી: {last_err}")

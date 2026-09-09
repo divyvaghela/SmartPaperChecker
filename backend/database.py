@@ -18,3 +18,4 @@ try:
 except Exception as e:
     print(f"MongoDB Warning: {e}")
     submissions_collection = None
+    users_collection = db["users"] if db is not None else None

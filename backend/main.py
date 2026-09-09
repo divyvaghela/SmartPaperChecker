@@ -5,11 +5,15 @@ from typing import List, Optional
 from datetime import datetime
 from bson import ObjectId
 from pydantic import BaseModel
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from evaluator import evaluate_paper
-from database import submissions_collection
+from database import submissions_collection, users_collection
 from config import upload_image_to_cloud
+from auth import (
+    hash_password, verify_password, create_access_token, 
+    get_current_user, require_roles
+)
 
 app = FastAPI(title="SmartPaperChecker API")
 
@@ -29,10 +33,89 @@ class UpdateSubmissionPayload(BaseModel):
     teacher_feedback: str
     evaluation_status: str
 
+class RegisterPayload(BaseModel):
+    name: str
+    email: str
+    password: str
+    role: str = "TEACHER"  # "ADMIN" | "TEACHER" | "STUDENT"
+    roll_no: Optional[str] = None  # For students
+
+class LoginPayload(BaseModel):
+    email: str
+    password: str
+
 @app.get("/")
 def read_root():
     return {"status": "Online", "service": "SmartPaperChecker API"}
 
+# --- Auth Endpoints ---
+@app.post("/api/auth/register")
+async def register(payload: RegisterPayload):
+    if users_collection is None:
+        return {"success": False, "detail": "Database error"}
+    
+    existing = await users_collection.find_one({"email": payload.email.lower().strip()})
+    if existing:
+        raise HTTPException(status_code=400, detail="આ ઈમેલ પહેલેથી રજીસ્ટર થયેલો છે.")
+
+    new_user = {
+        "name": payload.name.strip(),
+        "email": payload.email.lower().strip(),
+        "password_hash": hash_password(payload.password),
+        "role": payload.role.upper(),
+        "roll_no": payload.roll_no,
+        "created_at": datetime.utcnow()
+    }
+    inserted = await users_collection.insert_one(new_user)
+    token = create_access_token({"sub": str(inserted.inserted_id), "role": new_user["role"]})
+    return {
+        "success": True,
+        "token": token,
+        "user": {
+            "id": str(inserted.inserted_id),
+            "name": new_user["name"],
+            "email": new_user["email"],
+            "role": new_user["role"],
+            "roll_no": new_user["roll_no"]
+        }
+    }
+
+@app.post("/api/auth/login")
+async def login(payload: LoginPayload):
+    if users_collection is None:
+        return {"success": False, "detail": "Database error"}
+
+    user = await users_collection.find_one({"email": payload.email.lower().strip()})
+    if not user or not verify_password(payload.password, user.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="અમાન્ય ઈમેલ અથવા પાસવર્ડ.")
+
+    token = create_access_token({"sub": str(user["_id"]), "role": user.get("role", "TEACHER")})
+    return {
+        "success": True,
+        "token": token,
+        "user": {
+            "id": str(user["_id"]),
+            "name": user.get("name"),
+            "email": user.get("email"),
+            "role": user.get("role"),
+            "roll_no": user.get("roll_no")
+        }
+    }
+
+@app.get("/api/auth/me")
+async def get_me(current_user: dict = Depends(get_current_user)):
+    return {
+        "success": True,
+        "user": {
+            "id": current_user["_id"],
+            "name": current_user.get("name"),
+            "email": current_user.get("email"),
+            "role": current_user.get("role"),
+            "roll_no": current_user.get("roll_no")
+        }
+    }
+
+# --- Paper Evaluation Endpoints ---
 @app.post("/api/evaluate")
 async def evaluate_single_paper(
     file: UploadFile = File(...),

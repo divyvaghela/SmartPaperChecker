@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Upload, AlertCircle, Award, FileText, Download, Layers, 
-  UserCheck, BarChart3, Clock, CheckCircle2, RefreshCw, Edit3, ShieldCheck, ExternalLink
+  UserCheck, BarChart3, Clock, CheckCircle2, RefreshCw, Edit3, 
+  ShieldCheck, ExternalLink, LogIn, LogOut, User, Lock, Mail, ShieldAlert
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { toPng } from 'html-to-image';
@@ -9,7 +10,24 @@ import { toPng } from 'html-to-image';
 export default function App() {
   const [activeTab, setActiveTab] = useState('single');
 
-  // Single mode state
+  // --- Auth State ---
+  const [currentUser, setCurrentUser] = useState(() => {
+    const saved = localStorage.getItem('paper_checker_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [token, setToken] = useState(() => localStorage.getItem('paper_checker_token') || '');
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
+  const [authLoading, setAuthLoading] = useState(false);
+
+  // Auth Form fields
+  const [authName, setAuthName] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authRole, setAuthRole] = useState('TEACHER'); // 'TEACHER' | 'ADMIN' | 'STUDENT'
+  const [authRollNo, setAuthRollNo] = useState('');
+
+  // --- Single Evaluation State ---
   const [studentName, setStudentName] = useState('Rahul Sharma');
   const [rollNo, setRollNo] = useState('101');
   const [subject, setSubject] = useState('Computer Science');
@@ -27,17 +45,71 @@ export default function App() {
   const [editedFeedback, setEditedFeedback] = useState('');
   const [verifyLoading, setVerifyLoading] = useState(false);
 
-  // Batch mode state
+  // --- Batch mode state ---
   const [batchFiles, setBatchFiles] = useState([]);
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchResults, setBatchResults] = useState([]);
 
-  // Analytics & History state
+  // --- Analytics & History state ---
   const [analytics, setAnalytics] = useState(null);
   const [submissions, setSubmissions] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
   const reportRef = useRef(null);
+
+  // --- Auth Handlers ---
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    setAuthLoading(true);
+
+    const endpoint = authMode === 'login' ? 'http://localhost:8000/api/auth/login' : 'http://localhost:8000/api/auth/register';
+    const payload = authMode === 'login' 
+      ? { email: authEmail, password: authPassword }
+      : { 
+          name: authName, 
+          email: authEmail, 
+          password: authPassword, 
+          role: authRole,
+          roll_no: authRole === 'STUDENT' ? authRollNo : null 
+        };
+
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        localStorage.setItem('paper_checker_token', data.token);
+        localStorage.setItem('paper_checker_user', JSON.stringify(data.user));
+        setToken(data.token);
+        setCurrentUser(data.user);
+        setAuthModalOpen(false);
+
+        // If student logged in, auto fill their details
+        if (data.user.role === 'STUDENT') {
+          setStudentName(data.user.name);
+          if (data.user.roll_no) setRollNo(data.user.roll_no);
+          setActiveTab('analytics');
+        }
+      } else {
+        alert('પ્રમાણીકરણ નિષ્ફળ: ' + (data.detail || 'ખામી સર્જાઈ'));
+      }
+    } catch (err) {
+      alert('સર્વર કનેક્શન એરર. ખાતરી કરો કે બેકએન્ડ ચાલુ છે.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('paper_checker_token');
+    localStorage.removeItem('paper_checker_user');
+    setToken('');
+    setCurrentUser(null);
+  };
 
   const fetchAnalyticsAndHistory = async () => {
     setHistoryLoading(true);
@@ -51,7 +123,17 @@ export default function App() {
       const submissionsData = await submissionsRes.json();
 
       if (analyticsData.success) setAnalytics(analyticsData.data);
-      if (submissionsData.success) setSubmissions(submissionsData.data);
+      if (submissionsData.success) {
+        // If student, filter only their papers
+        if (currentUser && currentUser.role === 'STUDENT') {
+          const filtered = submissionsData.data.filter(
+            (s) => s.roll_no === currentUser.roll_no || s.student_name.toLowerCase() === currentUser.name.toLowerCase()
+          );
+          setSubmissions(filtered);
+        } else {
+          setSubmissions(submissionsData.data);
+        }
+      }
     } catch (err) {
       console.error('Error fetching analytics:', err);
     } finally {
@@ -63,7 +145,7 @@ export default function App() {
     if (activeTab === 'analytics') {
       fetchAnalyticsAndHistory();
     }
-  }, [activeTab]);
+  }, [activeTab, currentUser]);
 
   const handleImageChange = (e) => {
     const file = e.target.files[0];
@@ -99,6 +181,7 @@ export default function App() {
     try {
       const response = await fetch('http://localhost:8000/api/evaluate', {
         method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         body: formData,
       });
 
@@ -130,7 +213,10 @@ export default function App() {
     try {
       const response = await fetch('http://localhost:8000/api/submissions/verify', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           submission_id: result.submission_id,
           obtained_marks: marksNum,
@@ -177,6 +263,7 @@ export default function App() {
     try {
       const response = await fetch('http://localhost:8000/api/evaluate-batch', {
         method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         body: formData,
       });
 
@@ -235,9 +322,12 @@ export default function App() {
     document.body.removeChild(link);
   };
 
+  const isTeacherOrAdmin = !currentUser || currentUser.role === 'TEACHER' || currentUser.role === 'ADMIN';
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 p-6">
       <div className="max-w-6xl mx-auto">
+        
         {/* Header */}
         <header className="mb-6 border-b border-slate-200 pb-4 flex flex-col md:flex-row justify-between items-center gap-4">
           <div>
@@ -245,37 +335,69 @@ export default function App() {
             <p className="text-sm text-slate-500">મલ્ટિલિંગ્યુઅલ (ગુજરાતી / ઇંગ્લિશ) AI પરીક્ષા મૂલ્યાંકન & ERP સિસ્ટમ</p>
           </div>
 
-          {/* Navigation Tabs */}
-          <div className="flex gap-2 bg-slate-200 p-1.5 rounded-xl">
-            <button
-              onClick={() => setActiveTab('single')}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                activeTab === 'single' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <UserCheck className="w-4 h-4" /> સિંગલ પેપર
-            </button>
-            <button
-              onClick={() => setActiveTab('batch')}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                activeTab === 'batch' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Layers className="w-4 h-4" /> બેચ મોડ
-            </button>
-            <button
-              onClick={() => setActiveTab('analytics')}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                activeTab === 'analytics' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <BarChart3 className="w-4 h-4" /> એનાલિટિક્સ & હિસ્ટ્રી
-            </button>
+          <div className="flex items-center gap-3">
+            {/* Navigation Tabs */}
+            <div className="flex gap-1.5 bg-slate-200 p-1.5 rounded-xl">
+              {isTeacherOrAdmin && (
+                <>
+                  <button
+                    onClick={() => setActiveTab('single')}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                      activeTab === 'single' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <UserCheck className="w-4 h-4" /> સિંગલ પેપર
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('batch')}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                      activeTab === 'batch' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Layers className="w-4 h-4" /> બેચ મોડ
+                  </button>
+                </>
+              )}
+              <button
+                onClick={() => setActiveTab('analytics')}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  activeTab === 'analytics' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <BarChart3 className="w-4 h-4" /> {currentUser?.role === 'STUDENT' ? 'મારો રિપોર્ટ' : 'એનાલિટિક્સ & હિસ્ટ્રી'}
+              </button>
+            </div>
+
+            {/* User Auth Profile Badge / Login Button */}
+            {currentUser ? (
+              <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm">
+                <div className="text-left">
+                  <p className="text-xs font-bold text-slate-800 leading-tight">{currentUser.name}</p>
+                  <span className="text-[10px] font-semibold text-indigo-600 uppercase tracking-wider">
+                    {currentUser.role} {currentUser.roll_no ? `(${currentUser.roll_no})` : ''}
+                  </span>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  title="Logout"
+                  className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => { setAuthMode('login'); setAuthModalOpen(true); }}
+                className="flex items-center gap-1.5 bg-indigo-600 text-white text-xs font-semibold px-4 py-2.5 rounded-xl hover:bg-indigo-700 transition shadow-sm cursor-pointer"
+              >
+                <LogIn className="w-4 h-4" /> લૉગિન / સાઈનઅપ
+              </button>
+            )}
           </div>
         </header>
 
         {/* 1. Single Mode */}
-        {activeTab === 'single' && (
+        {activeTab === 'single' && isTeacherOrAdmin && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
               <h2 className="text-lg font-semibold flex items-center gap-2">
@@ -372,7 +494,7 @@ export default function App() {
               </button>
             </div>
 
-            {/* Single Evaluation Result & Audit Panel */}
+            {/* Evaluation Result Card */}
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-lg font-semibold flex items-center gap-2">
@@ -398,7 +520,6 @@ export default function App() {
 
               {result && (
                 <div className="space-y-4">
-                  {/* Printable & Verifiable Report Card */}
                   <div ref={reportRef} className="p-4 bg-white border border-slate-100 rounded-xl space-y-4">
                     <div className="border-b pb-3 flex justify-between items-center text-xs text-slate-600">
                       <div>
@@ -530,14 +651,14 @@ export default function App() {
         )}
 
         {/* 2. Batch Mode */}
-        {activeTab === 'batch' && (
+        {activeTab === 'batch' && isTeacherOrAdmin && (
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
             <div className="flex justify-between items-center border-b pb-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
                   <Layers className="w-5 h-5 text-indigo-600" /> આખા ક્લાસ માટે બેચ પેપર મૂલ્યાંકન
                 </h2>
-                <p className="text-xs text-slate-500">એકસાથે મલ્ટિપલ આન્સર-શીટ્સ અપલોડ કરો અને ગુણવત્તાનું સામૂહિક લિસ્ટ મેળવો.</p>
+                <p className="text-xs text-slate-500">એકસાથે મલ્ટિપલ આન્સર-શીટ્સ અપલોડ કરો અને સામૂહિક પરિણામ મેળવો.</p>
               </div>
               {batchResults.length > 0 && (
                 <button
@@ -636,7 +757,8 @@ export default function App() {
           <div className="space-y-6">
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                <BarChart3 className="w-6 h-6 text-indigo-600" /> એકેડેમિક એનાલિટિક્સ & પેપર હિસ્ટ્રી
+                <BarChart3 className="w-6 h-6 text-indigo-600" /> 
+                {currentUser?.role === 'STUDENT' ? 'મારો પરીક્ષા રિપોર્ટ' : 'એકેડેમિક એનાલિટિક્સ & પેપર હિસ્ટ્રી'}
               </h2>
               <button
                 onClick={fetchAnalyticsAndHistory}
@@ -646,8 +768,8 @@ export default function App() {
               </button>
             </div>
 
-            {/* Metric KPI Cards */}
-            {analytics && (
+            {/* Metric KPI Cards (Only for Teacher / Admin) */}
+            {isTeacherOrAdmin && analytics && (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                   <p className="text-xs font-bold uppercase text-slate-400">કુલ તપાસેલા પેપર્સ</p>
@@ -675,7 +797,8 @@ export default function App() {
             {/* Submissions History Table */}
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
               <h3 className="text-md font-semibold text-slate-800 mb-4 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-slate-500" /> અગાઉ તપાસેલા પેપર્સનો ડેટાબેઝ રેકોર્ડ
+                <Clock className="w-4 h-4 text-slate-500" /> 
+                {currentUser?.role === 'STUDENT' ? 'તમારા તપાસાયેલા પેપર્સ' : 'અગાઉ તપાસેલા પેપર્સનો ડેટાબેઝ રેકોર્ડ'}
               </h3>
 
               {historyLoading ? (
@@ -687,7 +810,7 @@ export default function App() {
                   <table className="w-full text-left text-sm text-slate-600">
                     <thead className="bg-slate-50 text-slate-700 text-xs font-bold uppercase border-b">
                       <tr>
-                        <th className="p-3">વિદ્યાર્થી or વિદ્યાર્થીni</th>
+                        <th className="p-3">વિદ્યાર્થી</th>
                         <th className="p-3">રોલ નં</th>
                         <th className="p-3">વિષય</th>
                         <th className="p-3">ગુણ</th>
@@ -737,6 +860,136 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* --- Authentication Modal (Login / Register) --- */}
+        {authModalOpen && (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md p-6 relative">
+              <button
+                onClick={() => setAuthModalOpen(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-xl font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+
+              <h2 className="text-xl font-bold text-slate-800 mb-1">
+                {authMode === 'login' ? 'સિસ્ટમ લૉગિન' : 'નવું એકાઉન્ટ રજીસ્ટર કરો'}
+              </h2>
+              <p className="text-xs text-slate-500 mb-6">SmartPaperChecker ERP પ્લેટફોર્મ એક્સેસ કરો</p>
+
+              <form onSubmit={handleAuthSubmit} className="space-y-4">
+                {authMode === 'register' && (
+                  <>
+                    <div>
+                      <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">પૂરું નામ</label>
+                      <div className="relative">
+                        <User className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                        <input
+                          type="text"
+                          required
+                          placeholder="દા.ત. પ્રો. મહેશ પટેલ"
+                          className="w-full border rounded-xl pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                          value={authName}
+                          onChange={(e) => setAuthName(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">તમારી ભૂમિકા (Role)</label>
+                      <select
+                        value={authRole}
+                        onChange={(e) => setAuthRole(e.target.value)}
+                        className="w-full border rounded-xl px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="TEACHER">શિક્ષક (Teacher / Evaluator)</option>
+                        <option value="ADMIN">એડમિન / પ્રિન્સિપાલ (Admin)</option>
+                        <option value="STUDENT">વિદ્યાર્થી (Student)</option>
+                      </select>
+                    </div>
+
+                    {authRole === 'STUDENT' && (
+                      <div>
+                        <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">રોલ નં</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="દા.ત. 101"
+                          className="w-full border rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                          value={authRollNo}
+                          onChange={(e) => setAuthRollNo(e.target.value)}
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">ઈમેલ એડ્રેસ</label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input
+                      type="email"
+                      required
+                      placeholder="name@school.edu"
+                      className="w-full border rounded-xl pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-600 mb-1">પાસવર્ડ</label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input
+                      type="password"
+                      required
+                      placeholder="••••••••"
+                      className="w-full border rounded-xl pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={authLoading}
+                  className="w-full bg-indigo-600 text-white font-semibold py-2.5 rounded-xl hover:bg-indigo-700 transition cursor-pointer disabled:bg-slate-400 text-sm"
+                >
+                  {authLoading ? 'પ્રોસેસિંગ...' : (authMode === 'login' ? 'લૉગિન કરો' : 'ખાતું બનાવો')}
+                </button>
+              </form>
+
+              <div className="mt-4 text-center text-xs text-slate-500">
+                {authMode === 'login' ? (
+                  <p>
+                    ખાતું નથી?{' '}
+                    <button
+                      onClick={() => setAuthMode('register')}
+                      className="text-indigo-600 font-bold hover:underline cursor-pointer"
+                    >
+                      અહીં રજીસ્ટર કરો
+                    </button>
+                  </p>
+                ) : (
+                  <p>
+                    પહેલેથી ખાતું છે?{' '}
+                    <button
+                      onClick={() => setAuthMode('login')}
+                      className="text-indigo-600 font-bold hover:underline cursor-pointer"
+                    >
+                      લૉગિન કરો
+                    </button>
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

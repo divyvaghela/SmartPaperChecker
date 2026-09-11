@@ -246,3 +246,102 @@ def evaluate_supplementary_exam(images_bytes_list: list[bytes], exam_payload: di
                     break
 
     raise RuntimeError(f"સપ્લીમેન્ટરી મૂલ્યાંકનમાં ક્ષતિ આવી: {last_err}")
+
+def evaluate_auto_extracted_exam(
+    question_paper_bytes_list: list[bytes],
+    answer_key_bytes_list: list[bytes],
+    student_supplementary_bytes_list: list[bytes],
+    exam_title: str = "Exam",
+    subject: str = "General"
+) -> dict:
+    """
+    પ્રશ્નપત્ર, આન્સર કી અને સપ્લીમેન્ટરી ત્રણેયના ફોટા સ્કેન કરીને સીધું મૂલ્યાંકન કરે છે.
+    """
+    contents = []
+
+    prompt = f"""
+તમે એક અનુભવી મુખ્ય પરીક્ષક છો. તમારી પાસે નીચે મુજબના દસ્તાવેજો છે:
+1. [પ્રશ્નપત્ર - Question Paper]: પરીક્ષાના પ્રશ્નો, સેક્શન્સ અને દરેક પ્રશ્નના ગુણ.
+2. [આદર્શ ઉત્તરવહી - Model Answer Key]: સાચા જવાબો અને મૂલ્યાંકનના માપદંડ.
+3. [વિદ્યાર્થીની ઉત્તરવહી - Student Supplementary]: વિદ્યાર્થીએ હાથે લખેલા જવાબો (આડાઅવળા પણ હોઈ શકે).
+
+[પરીક્ષા વિગત]:
+- શીર્ષક: {exam_title}
+- વિષય: {subject}
+
+[તમારું કાર્ય]:
+1. પ્રશ્નપત્રમાંથી તમામ પ્રશ્નો, સેક્શન અને તેમના મહત્તમ ગુણ (max_marks) ઓળખો.
+2. આન્સર કીમાંથી સાચો સંદર્ભ સમજો.
+3. વિદ્યાર્થીની ઉત્તરવહીમાંથી દરેક પ્રશ્નનો સાચો જવાબ શોધીને સ્ટેપ-વાઇઝ માર્ક્સ ફાળવો. જો કોઈ પ્રશ્ન ન લખ્યો હોય તો 0 ગુણ આપો.
+4. સમગ્ર પેપરના મેળવેલા ગુણ અને રચનાત્મક શિક્ષક ટિપ્પણી આપો.
+
+માત્ર શુદ્ધ JSON ફોર્મેટ આપો:
+{{
+  "overall_summary": "વિદ્યાર્થીના સમગ્ર પરિણામ વિશે ટિપ્પણી",
+  "total_max_marks": 0.0,
+  "total_obtained_marks": 0.0,
+  "overall_status": "CORRECT",
+  "sections_evaluation": [
+    {{
+      "section_name": "Section A",
+      "questions": [
+        {{
+          "q_id": "Q1",
+          "question": "પ્રશ્નપત્રમાંથી વંચાયેલો પ્રશ્ન",
+          "max_marks": 2.0,
+          "obtained_marks": 2.0,
+          "page_reference": "Page 1",
+          "student_answer_snippet": "વિદ્યાર્થીએ લખેલો જવાબ",
+          "status": "CORRECT",
+          "feedback": "પ્રશ્નવાર ટૂંકી સમીક્ષા",
+          "missing_points": []
+        }}
+      ]
+    }}
+  ]
+}}
+"""
+    contents.append(prompt)
+
+    # 1. પ્રશ્નપત્ર ઉમેરો
+    contents.append("--- [Question Paper Pages Below] ---")
+    for b in question_paper_bytes_list:
+        comp_b = quick_compress_image(b)
+        contents.append(types.Part.from_bytes(data=comp_b, mime_type="image/jpeg"))
+
+    # 2. આન્સર કી ઉમેરો
+    contents.append("--- [Model Answer Key Pages Below] ---")
+    for b in answer_key_bytes_list:
+        comp_b = quick_compress_image(b)
+        contents.append(types.Part.from_bytes(data=comp_b, mime_type="image/jpeg"))
+
+    # 3. વિદ્યાર્થીની સપ્લીમેન્ટરી ઉમેરો
+    contents.append("--- [Student Supplementary Pages Below] ---")
+    for b in student_supplementary_bytes_list:
+        comp_b = quick_compress_image(b)
+        contents.append(types.Part.from_bytes(data=comp_b, mime_type="image/jpeg"))
+
+    models_pool = ["gemini-3.6-flash", "gemini-3.1-pro-preview"]
+    last_err = None
+
+    for model_id in models_pool:
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
+                )
+                if response and response.text:
+                    return json.loads(response.text.strip())
+            except Exception as e:
+                last_err = e
+                print(f"[{model_id}] Full-Auto Eval Error: {e}")
+                if "503" in str(e) or "UNAVAILABLE" in str(e):
+                    time.sleep(1.5)
+                else:
+                    break
+
+    raise RuntimeError(f"સંપૂર્ણ ઓટો-ઇવેલ્યુએશનમાં ખામી આવી: {last_err}")

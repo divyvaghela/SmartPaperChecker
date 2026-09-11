@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from evaluator import evaluate_paper, evaluate_multi_question_paper, evaluate_supplementary_exam
 from database import submissions_collection, users_collection
 from config import upload_image_to_cloud
+from evaluator import evaluate_paper, evaluate_multi_question_paper, evaluate_supplementary_exam, evaluate_auto_extracted_exam
 from auth import (
     hash_password, verify_password, create_access_token, 
     get_current_user, require_roles
@@ -109,6 +110,71 @@ async def register(payload: RegisterPayload):
         }
     }
 
+
+@app.post("/api/evaluate-auto-upload")
+async def evaluate_auto_upload(
+    question_paper_files: List[UploadFile] = File(...),
+    answer_key_files: List[UploadFile] = File(...),
+    student_files: List[UploadFile] = File(...),
+    student_name: str = Form("Student"),
+    roll_no: str = Form("101"),
+    subject: str = Form("General"),
+    exam_title: str = Form("Exam")
+):
+    try:
+        loop = asyncio.get_event_loop()
+
+        # Files Read
+        qp_bytes = [await f.read() for f in question_paper_files]
+        ak_bytes = [await f.read() for f in answer_key_files]
+        st_bytes = [await f.read() for f in student_files]
+
+        # Upload student files for review later
+        upload_tasks = [
+            loop.run_in_executor(executor, safe_upload_image, b)
+            for b in st_bytes
+        ]
+        cloud_urls = await asyncio.gather(*upload_tasks)
+
+        # AI Evaluation
+        result = await loop.run_in_executor(
+            executor,
+            evaluate_auto_extracted_exam,
+            qp_bytes,
+            ak_bytes,
+            st_bytes,
+            exam_title,
+            subject
+        )
+
+        result["pages_urls"] = cloud_urls
+
+        # Save to DB
+        if submissions_collection is not None:
+            doc = {
+                "student_name": student_name,
+                "roll_no": roll_no,
+                "subject": subject,
+                "exam_title": exam_title,
+                "is_supplementary": True,
+                "pages_count": len(student_files),
+                "pages_urls": cloud_urls,
+                "sections_evaluation": result.get("sections_evaluation", []),
+                "obtained_marks": result.get("total_obtained_marks", 0.0),
+                "max_marks": result.get("total_max_marks", 0.0),
+                "evaluation_status": result.get("overall_status", "CORRECT"),
+                "teacher_feedback": result.get("overall_summary", ""),
+                "is_verified": False,
+                "created_at": datetime.utcnow()
+            }
+            inserted = await submissions_collection.insert_one(doc)
+            result["submission_id"] = str(inserted.inserted_id)
+
+        return {"success": True, "data": result}
+    except Exception as e:
+        print(f"[Auto Upload Error]: {e}")
+        return {"success": False, "detail": str(e)}
+    
 @app.post("/api/auth/login")
 async def login(payload: LoginPayload):
     if users_collection is None:

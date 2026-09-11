@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Upload, AlertCircle, Award, FileText, Download, Layers, 
-  UserCheck, BarChart3, Clock, CheckCircle2, RefreshCw, Edit3, 
-  ShieldCheck, ExternalLink, LogIn, LogOut, User, Lock, Mail, 
-  PlusCircle, Trash2, ListChecks, BookOpen, Images, FileSpreadsheet, Eye
+  Upload, Award, FileText, Download, Layers, 
+  UserCheck, BarChart3, Clock, RefreshCw, Edit3, 
+  LogIn, LogOut, User, Lock, Mail, 
+  BookOpen, Images, Eye, FileQuestion, KeyRound, Sparkles
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { toPng } from 'html-to-image';
@@ -31,47 +31,24 @@ export default function App() {
   const [authRole, setAuthRole] = useState('TEACHER');
   const [authRollNo, setAuthRollNo] = useState('');
 
-  // --- Supplementary Multi-Page Exam Builder State ---
+  // --- Exam Info State ---
   const [examTitle, setExamTitle] = useState('Mid-Term Examination 2026');
   const [subject, setSubject] = useState('Computer Science');
   const [studentName, setStudentName] = useState('Rahul Sharma');
   const [rollNo, setRollNo] = useState('101');
 
-  const [sections, setSections] = useState([
-    {
-      section_name: 'Section A (ટૂંકા પ્રશ્નો)',
-      questions: [
-        {
-          q_id: 'Q1',
-          question: 'કમ્પ્યુટરના મુખ્ય ઘટકો (Components) કયા છે?',
-          model_answer: 'ઇનપુટ ડિવાઇસ (કીબોર્ડ, માઉસ), CPU, આઉટપુટ ડિવાઇસ (મોનિટર), સ્ટોરેજ ડિવાઇસ.',
-          max_marks: 2
-        },
-        {
-          q_id: 'Q2',
-          question: 'RAM અને ROM વચ્ચેનો તફાવત જણાવો.',
-          model_answer: 'RAM અસ્થાયી (Volatile) છે જ્યારે ROM કાયમી (Non-Volatile) મેમરી છે.',
-          max_marks: 2
-        }
-      ]
-    },
-    {
-      section_name: 'Section B (વિસ્તૃત પ્રશ્નો)',
-      questions: [
-        {
-          q_id: 'Q3',
-          question: 'ઓપરેટિંગ સિસ્ટમની મુખ્ય જવાબદારીઓ સમજાવો.',
-          model_answer: 'પ્રોસેસ મેનેજમેન્ટ, મેમરી મેનેજમેન્ટ, ફાઇલ સિસ્ટમ કંટ્રોલ અને સિક્યોરિટી પૂરી પાડવી.',
-          max_marks: 5
-        }
-      ]
-    }
-  ]);
+  // --- 3-Way Auto Upload States (Zero-Typing Mode) ---
+  const [qpFiles, setQpFiles] = useState([]);
+  const [qpPreviews, setQpPreviews] = useState([]);
 
-  const [supplementaryFiles, setSupplementaryFiles] = useState([]);
-  const [supplementaryPreviews, setSupplementaryPreviews] = useState([]);
-  const [suppLoading, setSuppLoading] = useState(false);
-  const [suppResult, setSuppResult] = useState(null);
+  const [akFiles, setAkFiles] = useState([]);
+  const [akPreviews, setAkPreviews] = useState([]);
+
+  const [suppFiles, setSuppFiles] = useState([]);
+  const [suppPreviews, setSuppPreviews] = useState([]);
+
+  const [autoLoading, setAutoLoading] = useState(false);
+  const [evalResult, setEvalResult] = useState(null);
 
   // --- Single Evaluation State (Legacy fallback) ---
   const [question, setQuestion] = useState('કમ્પ્યુટરના મુખ્ય ઘટકો કયા છે?');
@@ -189,133 +166,50 @@ export default function App() {
     }
   }, [activeTab, currentUser]);
 
-  // --- Dynamic Section & Question Builder Handlers ---
-  const addSection = () => {
-    setSections((prev) => [
-      ...prev,
-      {
-        section_name: `Section ${String.fromCharCode(65 + prev.length)}`,
-        questions: [
-          {
-            q_id: `Q${prev.reduce((acc, s) => acc + s.questions.length, 0) + 1}`,
-            question: '',
-            model_answer: '',
-            max_marks: 5
-          }
-        ]
-      }
-    ]);
-  };
-
-  const removeSection = (sIndex) => {
-    if (sections.length <= 1) {
-      alert('ઓછામાં ઓછો એક સેક્શન હોવો જરૂરી છે.');
+  // --- Auto-Upload Evaluation Handler ---
+  const handleAutoEvaluate = async () => {
+    if (qpFiles.length === 0) {
+      alert('કૃપા કરીને પ્રશ્નપત્ર (Question Paper) અપલોડ કરો.');
       return;
     }
-    setSections((prev) => prev.filter((_, idx) => idx !== sIndex));
-  };
-
-  const updateSectionName = (sIndex, name) => {
-    setSections((prev) => {
-      const copy = [...prev];
-      copy[sIndex].section_name = name;
-      return copy;
-    });
-  };
-
-  const addQuestionToSection = (sIndex) => {
-    setSections((prev) => {
-      const copy = [...prev];
-      const totalQ = copy.reduce((acc, s) => acc + s.questions.length, 0) + 1;
-      copy[sIndex].questions.push({
-        q_id: `Q${totalQ}`,
-        question: '',
-        model_answer: '',
-        max_marks: 5
-      });
-      return copy;
-    });
-  };
-
-  const removeQuestionFromSection = (sIndex, qIndex) => {
-    setSections((prev) => {
-      const copy = [...prev];
-      if (copy[sIndex].questions.length <= 1) {
-        alert('દરેક સેક્શનમાં ઓછામાં ઓછો એક પ્રશ્ન હોવો જોઈએ.');
-        return prev;
-      }
-      copy[sIndex].questions = copy[sIndex].questions.filter((_, idx) => idx !== qIndex);
-      return copy;
-    });
-  };
-
-  const updateQuestion = (sIndex, qIndex, field, val) => {
-    setSections((prev) => {
-      const copy = [...prev];
-      copy[sIndex].questions[qIndex][field] = field === 'max_marks' ? (parseFloat(val) || 0) : val;
-      return copy;
-    });
-  };
-
-  // --- Multi-Page File Selection Handlers (Append Mode) ---
-  const handleSupplementaryFiles = (e) => {
-    const newFiles = Array.from(e.target.files || []);
-    if (newFiles.length > 0) {
-      setSupplementaryFiles((prev) => [...prev, ...newFiles]);
-      setSupplementaryPreviews((prev) => [
-        ...prev,
-        ...newFiles.map((f) => URL.createObjectURL(f))
-      ]);
+    if (akFiles.length === 0) {
+      alert('કૃપા કરીને મોડેલ આન્સર-કી (Answer Key) અપલોડ કરો.');
+      return;
     }
-  };
-
-  const removeSupplementaryFile = (idx) => {
-    setSupplementaryFiles((prev) => prev.filter((_, i) => i !== idx));
-    setSupplementaryPreviews((prev) => prev.filter((_, i) => i !== idx));
-  };
-
-  // --- Evaluate Multi-Page Supplementary ---
-  const handleEvaluateSupplementary = async () => {
-    if (supplementaryFiles.length === 0) {
-      alert('કૃપા કરીને સપ્લીમેન્ટરીના પાના (૧ કે તેથી વધુ ફોટા) અપલોડ કરો.');
+    if (suppFiles.length === 0) {
+      alert('કૃપા કરીને વિદ્યાર્થીની સપ્લીમેન્ટરી (Student Supplementary) અપલોડ કરો.');
       return;
     }
 
-    setSuppLoading(true);
-    setSuppResult(null);
+    setAutoLoading(true);
+    setEvalResult(null);
 
     const formData = new FormData();
-    supplementaryFiles.forEach((file) => {
-      formData.append('files', file);
-    });
+    qpFiles.forEach((f) => formData.append('question_paper_files', f));
+    akFiles.forEach((f) => formData.append('answer_key_files', f));
+    suppFiles.forEach((f) => formData.append('student_files', f));
 
     formData.append('student_name', studentName);
     formData.append('roll_no', rollNo);
     formData.append('subject', subject);
-
-    const examPayload = {
-      exam_title: examTitle,
-      subject: subject,
-      sections: sections
-    };
-    formData.append('exam_payload_json', JSON.stringify(examPayload));
+    formData.append('exam_title', examTitle);
 
     try {
-      const res = await fetch('http://localhost:8000/api/evaluate-supplementary', {
+      const res = await fetch('http://localhost:8000/api/evaluate-auto-upload', {
         method: 'POST',
         headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         body: formData
       });
       const data = await res.json();
       if (data.success) {
-        setSuppResult(data.data);
+        setEvalResult(data.data);
       } else {
         alert('મૂલ્યાંકનમાં ખામી: ' + (data.detail || 'Failed'));
       }
     } catch (err) {
       alert('સર્વર સાથે સંપર્ક ન થઈ શક્યો. ખાતરી કરો કે બેકએન્ડ ચાલુ છે.');
     } finally {
-      setSuppLoading(false);
+      setAutoLoading(false);
     }
   };
 
@@ -450,11 +344,6 @@ export default function App() {
     }
   };
 
-  const totalCalculatedMax = sections.reduce(
-    (sum, sec) => sum + sec.questions.reduce((qSum, q) => qSum + (parseFloat(q.max_marks) || 0), 0),
-    0
-  );
-
   const isTeacherOrAdmin = !currentUser || currentUser.role === 'TEACHER' || currentUser.role === 'ADMIN';
 
   return (
@@ -479,7 +368,7 @@ export default function App() {
                       activeTab === 'supplementary' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <BookOpen className="w-4 h-4 text-indigo-600" /> એક્ઝામ & સપ્લીમેન્ટરી (Multi-Page)
+                    <Sparkles className="w-4 h-4 text-indigo-600" /> ઓટો અપલોડ મોડ (No Typing)
                   </button>
                   <button
                     onClick={() => setActiveTab('single')}
@@ -537,19 +426,19 @@ export default function App() {
           </div>
         </header>
 
-        {/* --- 1. Supplementary Multi-Page Exam Builder (Core Feature) --- */}
+        {/* --- 1. Zero-Typing 3-Way Auto Upload Mode --- */}
         {activeTab === 'supplementary' && isTeacherOrAdmin && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             
-            {/* Left Column: Exam Schema & Multi-Page Supplementary Upload */}
+            {/* Left Column: 3-Way Upload Form */}
             <div className="lg:col-span-6 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
               <div className="flex justify-between items-center border-b pb-3">
-                <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800">
-                  <BookOpen className="w-5 h-5 text-indigo-600" /> પ્રશ્નપત્ર બિલ્ડર & સપ્લીમેન્ટરી ચેકિંગ
-                </h2>
-                <span className="text-xs font-bold bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full border border-indigo-200">
-                  કુલ ગુણ: {totalCalculatedMax}
-                </span>
+                <div>
+                  <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800">
+                    <Sparkles className="w-5 h-5 text-indigo-600" /> સ્માર્ટ ઓટો-મૂલ્યાંકન (Zero-Typing)
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">પ્રશ્નપત્ર, આન્સર-કી અને સપ્લીમેન્ટરી અપલોડ કરો — ટાઈપ કરવાની જરૂર નથી.</p>
+                </div>
               </div>
 
               {/* Exam Info */}
@@ -592,129 +481,124 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Sections & Questions */}
-              <div className="space-y-4 pt-2">
+              {/* 1. Question Paper Upload */}
+              <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-2">
                 <div className="flex justify-between items-center">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                    સેક્શન્સ & પ્રશ્નોની રૂપરેખા (Sections: {sections.length})
-                  </h3>
-                  <button
-                    onClick={addSection}
-                    className="flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition cursor-pointer"
-                  >
-                    <PlusCircle className="w-3.5 h-3.5" /> + નવો સેક્શન ઉમેરો
-                  </button>
-                </div>
-
-                <div className="space-y-4 max-h-[420px] overflow-y-auto pr-1">
-                  {sections.map((sec, sIdx) => (
-                    <div key={sIdx} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                      <div className="flex justify-between items-center border-b pb-2">
-                        <input
-                          type="text"
-                          className="text-xs font-bold text-indigo-800 bg-white border rounded px-2 py-1 outline-none w-2/3"
-                          value={sec.section_name}
-                          onChange={(e) => updateSectionName(sIdx, e.target.value)}
-                        />
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => addQuestionToSection(sIdx)}
-                            className="text-[11px] font-bold text-indigo-600 bg-white border border-indigo-200 px-2 py-0.5 rounded hover:bg-indigo-50 cursor-pointer"
-                          >
-                            + પ્રશ્ન
-                          </button>
-                          <button
-                            onClick={() => removeSection(sIdx)}
-                            className="text-slate-400 hover:text-rose-600 cursor-pointer"
-                            title="સેક્શન ડિલીટ"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Questions inside section */}
-                      <div className="space-y-2">
-                        {sec.questions.map((q, qIdx) => (
-                          <div key={qIdx} className="p-3 bg-white border border-slate-200 rounded-lg space-y-2">
-                            <div className="flex justify-between items-center">
-                              <input
-                                type="text"
-                                className="w-16 text-xs font-bold text-indigo-700 border rounded p-1"
-                                value={q.q_id}
-                                onChange={(e) => updateQuestion(sIdx, qIdx, 'q_id', e.target.value)}
-                              />
-                              <div className="flex items-center gap-2">
-                                <span className="text-[11px] font-semibold text-slate-500">ગુણ:</span>
-                                <input
-                                  type="number"
-                                  min="1"
-                                  className="w-12 text-center text-xs font-bold border rounded p-1"
-                                  value={q.max_marks}
-                                  onChange={(e) => updateQuestion(sIdx, qIdx, 'max_marks', e.target.value)}
-                                />
-                                <button
-                                  onClick={() => removeQuestionFromSection(sIdx, qIdx)}
-                                  className="text-slate-300 hover:text-rose-500 cursor-pointer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-
-                            <input
-                              type="text"
-                              placeholder="પ્રશ્ન વિગત..."
-                              className="w-full border rounded p-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500"
-                              value={q.question}
-                              onChange={(e) => updateQuestion(sIdx, qIdx, 'question', e.target.value)}
-                            />
-
-                            <textarea
-                              rows={2}
-                              placeholder="સાચો આદર્શ ઉત્તર (Model Answer / Rubric)..."
-                              className="w-full border rounded p-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500"
-                              value={q.model_answer}
-                              onChange={(e) => updateQuestion(sIdx, qIdx, 'model_answer', e.target.value)}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Multi-Page Supplementary Upload */}
-              <div className="border-t pt-3 space-y-2">
-                <label className="block text-xs font-bold uppercase text-slate-700 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5">
-                    <Images className="w-4 h-4 text-indigo-600" /> વિદ્યાર્થીની સપ્લીમેન્ટરી (તમામ પાના એકસાથે)
+                  <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                    <FileQuestion className="w-4 h-4 text-indigo-600" /> ૧. પ્રશ્નપત્ર અપલોડ કરો (Question Paper)
                   </span>
-                  <span className="text-indigo-600 font-semibold text-xs">
-                    {supplementaryFiles.length} પેજ પસંદ કરેલ
-                  </span>
-                </label>
-
+                  <span className="text-[11px] font-semibold text-indigo-600">{qpFiles.length} પાના પસંદ</span>
+                </div>
                 <input
                   type="file"
                   multiple
                   accept="image/*"
-                  onChange={handleSupplementaryFiles}
-                  className="block w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 cursor-pointer"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    if (files.length > 0) {
+                      setQpFiles((prev) => [...prev, ...files]);
+                      setQpPreviews((prev) => [...prev, ...files.map((f) => URL.createObjectURL(f))]);
+                    }
+                  }}
+                  className="block w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-100 file:text-indigo-800 cursor-pointer"
                 />
-
-                {supplementaryPreviews.length > 0 && (
-                  <div className="grid grid-cols-4 gap-2 pt-2 max-h-36 overflow-y-auto">
-                    {supplementaryPreviews.map((url, idx) => (
-                      <div key={idx} className="relative group border rounded-lg overflow-hidden bg-slate-50">
-                        <img src={url} alt={`Page ${idx + 1}`} className="h-20 w-full object-cover" />
-                        <span className="absolute bottom-1 left-1 bg-black/70 text-white text-[9px] px-1 rounded font-bold">
-                          P{idx + 1}
-                        </span>
+                {qpPreviews.length > 0 && (
+                  <div className="flex gap-2 overflow-x-auto py-1">
+                    {qpPreviews.map((url, idx) => (
+                      <div key={idx} className="relative group w-14 h-14 border rounded overflow-hidden flex-shrink-0 bg-white">
+                        <img src={url} alt={`QP ${idx + 1}`} className="w-full h-full object-cover" />
                         <button
-                          onClick={() => removeSupplementaryFile(idx)}
-                          className="absolute top-1 right-1 bg-rose-600 text-white rounded-full p-0.5 opacity-80 hover:opacity-100 cursor-pointer"
+                          type="button"
+                          onClick={() => {
+                            setQpFiles((p) => p.filter((_, i) => i !== idx));
+                            setQpPreviews((p) => p.filter((_, i) => i !== idx));
+                          }}
+                          className="absolute top-0.5 right-0.5 bg-rose-600 text-white rounded-full w-3.5 h-3.5 flex items-center justify-center text-[10px]"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 2. Answer Key Upload */}
+              <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-xl space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                    <KeyRound className="w-4 h-4 text-emerald-600" /> ૨. આદર્શ ઉત્તરવહી / આન્સર-કી (Answer Key)
+                  </span>
+                  <span className="text-[11px] font-semibold text-emerald-600">{akFiles.length} પાના પસંદ</span>
+                </div>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    if (files.length > 0) {
+                      setAkFiles((prev) => [...prev, ...files]);
+                      setAkPreviews((prev) => [...prev, ...files.map((f) => URL.createObjectURL(f))]);
+                    }
+                  }}
+                  className="block w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-100 file:text-emerald-800 cursor-pointer"
+                />
+                {akPreviews.length > 0 && (
+                  <div className="flex gap-2 overflow-x-auto py-1">
+                    {akPreviews.map((url, idx) => (
+                      <div key={idx} className="relative group w-14 h-14 border rounded overflow-hidden flex-shrink-0 bg-white">
+                        <img src={url} alt={`AK ${idx + 1}`} className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAkFiles((p) => p.filter((_, i) => i !== idx));
+                            setAkPreviews((p) => p.filter((_, i) => i !== idx));
+                          }}
+                          className="absolute top-0.5 right-0.5 bg-rose-600 text-white rounded-full w-3.5 h-3.5 flex items-center justify-center text-[10px]"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Student Supplementary Upload */}
+              <div className="p-3 bg-amber-50/50 border border-amber-100 rounded-xl space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                    <Images className="w-4 h-4 text-amber-600" /> ૩. વિદ્યાર્થીની સપ્લીમેન્ટરી (Student Supplementary)
+                  </span>
+                  <span className="text-[11px] font-semibold text-amber-700">{suppFiles.length} પાના પસંદ</span>
+                </div>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    if (files.length > 0) {
+                      setSuppFiles((prev) => [...prev, ...files]);
+                      setSuppPreviews((prev) => [...prev, ...files.map((f) => URL.createObjectURL(f))]);
+                    }
+                  }}
+                  className="block w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-amber-100 file:text-amber-800 cursor-pointer"
+                />
+                {suppPreviews.length > 0 && (
+                  <div className="flex gap-2 overflow-x-auto py-1">
+                    {suppPreviews.map((url, idx) => (
+                      <div key={idx} className="relative group w-14 h-14 border rounded overflow-hidden flex-shrink-0 bg-white">
+                        <img src={url} alt={`Supp ${idx + 1}`} className="w-full h-full object-cover" />
+                        <span className="absolute bottom-0 left-0 bg-black/70 text-white text-[8px] px-1">P{idx + 1}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSuppFiles((p) => p.filter((_, i) => i !== idx));
+                            setSuppPreviews((p) => p.filter((_, i) => i !== idx));
+                          }}
+                          className="absolute top-0.5 right-0.5 bg-rose-600 text-white rounded-full w-3.5 h-3.5 flex items-center justify-center text-[10px]"
                         >
                           ✕
                         </button>
@@ -725,25 +609,25 @@ export default function App() {
               </div>
 
               <button
-                onClick={handleEvaluateSupplementary}
-                disabled={suppLoading || supplementaryFiles.length === 0}
+                onClick={handleAutoEvaluate}
+                disabled={autoLoading || qpFiles.length === 0 || akFiles.length === 0 || suppFiles.length === 0}
                 className="w-full bg-indigo-600 text-white font-semibold py-3 rounded-xl hover:bg-indigo-700 transition flex justify-center items-center gap-2 disabled:bg-slate-400 cursor-pointer text-sm shadow-md"
               >
-                {suppLoading ? 'AI આખી સપ્લીમેન્ટરી સ્કેન કરી રહ્યું છે...' : (
+                {autoLoading ? 'AI પ્રશ્નપત્ર, આન્સર-કી અને સપ્લીમેન્ટરી સ્કેન કરી રહ્યું છે...' : (
                   <>
-                    <Upload className="w-4 h-4" /> આખી સપ્લીમેન્ટરી ચેક કરો (Non-Linear Scan)
+                    <Sparkles className="w-4 h-4 text-amber-300" /> આખું પેપર સ્કેન કરીને સીધું ચેક કરો
                   </>
                 )}
               </button>
             </div>
 
-            {/* Right Column: Comprehensive Multi-Page Marksheet & Non-Linear Mapping */}
+            {/* Right Column: Comprehensive Result */}
             <div className="lg:col-span-6 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800">
                   <Award className="w-5 h-5 text-indigo-600" /> એકેડેમિક ગુણાંક & પરીક્ષા રિપોર્ટ
                 </h2>
-                {suppResult && (
+                {evalResult && (
                   <button
                     onClick={downloadSupplementaryPDF}
                     className="flex items-center gap-1.5 bg-emerald-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-emerald-700 transition cursor-pointer shadow-sm"
@@ -753,22 +637,22 @@ export default function App() {
                 )}
               </div>
 
-              {!suppResult && !suppLoading && (
+              {!evalResult && !autoLoading && (
                 <div className="text-center py-40 text-slate-400">
                   <BookOpen className="w-12 h-12 mx-auto mb-2 opacity-30 text-indigo-400" />
-                  પ્રશ્નપત્ર તૈયાર કરી વિદ્યાર્થીની સપ્લીમેન્ટરીના પાના અપલોડ કરો.
+                  પ્રશ્નપત્ર, આન્સર-કી અને સપ્લીમેન્ટરીના ફોટા અપલોડ કરીને મૂલ્યાંકન શરૂ કરો.
                 </div>
               )}
 
-              {suppLoading && (
+              {autoLoading && (
                 <div className="text-center py-40 text-slate-500 animate-pulse">
                   <RefreshCw className="w-10 h-10 animate-spin mx-auto mb-3 text-indigo-600" />
-                  <p className="font-semibold text-sm text-slate-700">સપ્લીમેન્ટરીના તમામ પાનાનું વિશ્લેષણ થઈ રહ્યું છે...</p>
-                  <p className="text-xs text-slate-400 mt-1">આડાઅવળા લખેલા જવાબો શોધીને પ્રશ્ન સાથે જોડાઈ રહ્યા છે.</p>
+                  <p className="font-semibold text-sm text-slate-700">AI સમગ્ર દસ્તાવેજોનું વિશ્લેષણ કરી રહ્યું છે...</p>
+                  <p className="text-xs text-slate-400 mt-1">પ્રશ્નપત્રમાંથી ગુણભાર અને આન્સર-કીમાંથી સાચા જવાબો એક્સટ્રેક્ટ થઈ રહ્યા છે.</p>
                 </div>
               )}
 
-              {suppResult && (
+              {evalResult && (
                 <div ref={suppReportRef} className="space-y-4">
                   
                   {/* Overall Result Banner */}
@@ -776,19 +660,19 @@ export default function App() {
                     <div>
                       <p className="text-xs font-bold text-slate-500 uppercase">{studentName} (રોલ: {rollNo})</p>
                       <h3 className="text-sm font-extrabold text-indigo-950">{examTitle} - {subject}</h3>
-                      <p className="text-[11px] text-slate-500 mt-0.5">કુલ પાના તપાસ્યા: {supplementaryFiles.length}</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">કુલ પાના તપાસ્યા: {suppFiles.length}</p>
                     </div>
                     <div className="text-right">
                       <span className="text-xs font-bold uppercase text-indigo-600">મેળવેલા ગુણ</span>
                       <div className="text-3xl font-black text-indigo-950">
-                        {suppResult.total_obtained_marks} / {suppResult.total_max_marks}
+                        {evalResult.total_obtained_marks} / {evalResult.total_max_marks}
                       </div>
                     </div>
                   </div>
 
                   {/* Sections Breakdown */}
                   <div className="space-y-4 max-h-[460px] overflow-y-auto pr-1">
-                    {suppResult.sections_evaluation?.map((sec, sIdx) => (
+                    {evalResult.sections_evaluation?.map((sec, sIdx) => (
                       <div key={sIdx} className="border border-slate-200 rounded-xl p-3 bg-slate-50/50 space-y-3">
                         <div className="font-bold text-xs text-indigo-900 border-b pb-1">
                           {sec.section_name}
@@ -844,25 +728,25 @@ export default function App() {
                   </div>
 
                   {/* Overall Feedback */}
-                  {suppResult.overall_summary && (
+                  {evalResult.overall_summary && (
                     <div className="p-3 bg-slate-50 border rounded-xl text-xs text-slate-700">
                       <span className="font-bold text-slate-600 block mb-1">આખરી મૂલ્યાંકન સારાંશ:</span>
-                      {suppResult.overall_summary}
+                      {evalResult.overall_summary}
                     </div>
                   )}
 
                   {/* View Supplementary Pages (In-App Modal Popup) */}
                   <div className="pt-3 border-t flex flex-wrap items-center gap-2">
                     <span className="text-xs font-bold text-slate-600">મૂળ પાના તપાસો:</span>
-                    {(suppResult.pages_urls && suppResult.pages_urls.length > 0
-                      ? suppResult.pages_urls
-                      : supplementaryPreviews
+                    {(evalResult.pages_urls && evalResult.pages_urls.length > 0
+                      ? evalResult.pages_urls
+                      : suppPreviews
                     ).map((pageUrl, i) => (
                       <button
                         key={i}
                         type="button"
                         onClick={() => {
-                          const target = pageUrl || supplementaryPreviews[i];
+                          const target = pageUrl || suppPreviews[i];
                           if (target) setSelectedImageModal(target);
                         }}
                         className="text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg inline-flex items-center gap-1 font-semibold cursor-pointer transition shadow-xs"
@@ -1214,41 +1098,42 @@ export default function App() {
                             {sub.exam_title && <span className="block text-[11px] text-slate-400">{sub.exam_title}</span>}
                           </td>
                           <td className="p-3 font-bold">{sub.obtained_marks} / {sub.max_marks}</td>
-<td className="p-3">
-  {Array.isArray(sub.pages_urls) && sub.pages_urls.filter(Boolean).length > 0 ? (
-    <div className="flex flex-wrap gap-1">
-      {sub.pages_urls.filter(Boolean).map((url, pIdx) => (
-        <button
-          key={pIdx}
-          type="button"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setSelectedImageModal(url);
-          }}
-          className="text-[11px] bg-indigo-50 hover:bg-indigo-200 text-indigo-700 border border-indigo-300 px-2 py-0.5 rounded font-bold inline-flex items-center gap-1 cursor-pointer transition shadow-xs active:scale-95"
-          title={`Page ${pIdx + 1} જુઓ`}
-        >
-          <Eye className="w-3 h-3 text-indigo-600" /> P{pIdx + 1}
-        </button>
-      ))}
-    </div>
-  ) : sub.image_url ? (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setSelectedImageModal(sub.image_url);
-      }}
-      className="text-xs text-indigo-600 hover:text-indigo-800 underline inline-flex items-center gap-1 font-semibold cursor-pointer"
-    >
-      <Eye className="w-3 h-3" /> પેપર જુઓ
-    </button>
-  ) : (
-    <span className="text-slate-400 text-xs">-</span>
-  )}
-</td>                          <td className="p-3 text-slate-400">
+                          <td className="p-3">
+                            {Array.isArray(sub.pages_urls) && sub.pages_urls.filter(Boolean).length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {sub.pages_urls.filter(Boolean).map((url, pIdx) => (
+                                  <button
+                                    key={pIdx}
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      setSelectedImageModal(url);
+                                    }}
+                                    className="text-[11px] bg-indigo-50 hover:bg-indigo-200 text-indigo-700 border border-indigo-300 px-2 py-0.5 rounded font-bold inline-flex items-center gap-1 cursor-pointer transition shadow-xs active:scale-95"
+                                    title={`Page ${pIdx + 1} જુઓ`}
+                                  >
+                                    <Eye className="w-3 h-3 text-indigo-600" /> P{pIdx + 1}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : sub.image_url ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setSelectedImageModal(sub.image_url);
+                                }}
+                                className="text-xs text-indigo-600 hover:text-indigo-800 underline inline-flex items-center gap-1 font-semibold cursor-pointer"
+                              >
+                                <Eye className="w-3 h-3" /> પેપર જુઓ
+                              </button>
+                            ) : (
+                              <span className="text-slate-400 text-xs">-</span>
+                            )}
+                          </td>
+                          <td className="p-3 text-slate-400">
                             {sub.created_at ? new Date(sub.created_at).toLocaleDateString('gu-IN') : '-'}
                           </td>
                         </tr>
@@ -1391,38 +1276,38 @@ export default function App() {
         )}
 
         {/* --- In-App Full Image Modal (Lightbox Viewer) --- */}
-{/* Lightbox Viewer Modal */}
-{selectedImageModal && (
-  <div 
-    className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4"
-    onClick={() => setSelectedImageModal(null)}
-  >
-    <div 
-      className="bg-white rounded-2xl p-4 max-w-4xl w-full max-h-[90vh] flex flex-col relative shadow-2xl border border-slate-200"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="flex justify-between items-center pb-3 border-b">
-        <span className="text-sm font-bold text-slate-800 flex items-center gap-2">
-          <Eye className="w-4 h-4 text-indigo-600" /> ઓરિજિનલ પેપર પાનું
-        </span>
-        <button 
-          type="button"
-          onClick={() => setSelectedImageModal(null)}
-          className="text-slate-500 hover:text-rose-600 text-xl font-black px-2 py-1 rounded-lg cursor-pointer"
-        >
-          ✕
-        </button>
-      </div>
-      <div className="overflow-auto flex-1 p-2 text-center bg-slate-100 rounded-xl my-2">
-        <img 
-          src={selectedImageModal} 
-          alt="Answer Sheet Preview" 
-          className="max-h-[75vh] mx-auto object-contain rounded-lg border border-slate-300 shadow" 
-        />
-      </div>
-    </div>
-  </div>
-)}
+        {selectedImageModal && (
+          <div 
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 transition-all"
+            onClick={() => setSelectedImageModal(null)}
+          >
+            <div 
+              className="bg-white rounded-2xl p-4 max-w-4xl w-full max-h-[92vh] flex flex-col relative shadow-2xl border border-slate-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center pb-3 border-b px-1">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-indigo-600" />
+                  <span className="text-sm font-bold text-slate-800">મૂળ ઉત્તરવહી (Original Answer Sheet Page)</span>
+                </div>
+                <button 
+                  onClick={() => setSelectedImageModal(null)}
+                  className="text-slate-400 hover:text-rose-600 text-lg font-bold p-1 cursor-pointer transition"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="overflow-auto flex-1 p-2 text-center bg-slate-50 rounded-xl my-2">
+                <img 
+                  src={selectedImageModal} 
+                  alt="Original Answer Sheet" 
+                  className="max-h-[78vh] mx-auto object-contain rounded-lg border border-slate-200 shadow-sm" 
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

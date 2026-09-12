@@ -78,6 +78,12 @@ export default function App() {
   const reportRef = useRef(null);
   const suppReportRef = useRef(null);
 
+  const [batchQpFiles, setBatchQpFiles] = useState([]);
+  const [batchAkFiles, setBatchAkFiles] = useState([]);
+  const [batchStudentFiles, setBatchStudentFiles] = useState([]);
+  const [batchExamTitle, setBatchExamTitle] = useState('Mid-Term Examination 2026');
+  const [batchSubject, setBatchSubject] = useState('Computer Science');
+
   // --- Auth Handlers ---
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
@@ -312,39 +318,12 @@ export default function App() {
     }
   };
 
-  const handleBatchEvaluate = async () => {
-    if (batchFiles.length === 0) {
-      alert('કૃપા કરીને પેપર્સ પસંદ કરો.');
-      return;
-    }
-    setBatchLoading(true);
-    setBatchResults([]);
-
-    const formData = new FormData();
-    batchFiles.forEach((f) => formData.append('files', f));
-    formData.append('subject', subject);
-    formData.append('question', question);
-    formData.append('model_answer', modelAnswer);
-    formData.append('max_marks', maxMarks);
-
-    try {
-      const response = await fetch('http://localhost:8000/api/evaluate-batch', {
-        method: 'POST',
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-        body: formData,
-      });
-      const resData = await response.json();
-      if (resData.success) {
-        setBatchResults(resData.data);
-      }
-    } catch (err) {
-      alert('બેચ મૂલ્યાંકન નિષ્ફળ.');
-    } finally {
-      setBatchLoading(false);
-    }
-  };
-
   const isTeacherOrAdmin = !currentUser || currentUser.role === 'TEACHER' || currentUser.role === 'ADMIN';
+
+  const isPdfUrl = (url) => {
+    if (!url) return false;
+    return url.startsWith('data:application/pdf') || url.toLowerCase().includes('.pdf');
+  };
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 p-6">
@@ -487,33 +466,47 @@ export default function App() {
                   <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
                     <FileQuestion className="w-4 h-4 text-indigo-600" /> ૧. પ્રશ્નપત્ર અપલોડ કરો (Question Paper)
                   </span>
-                  <span className="text-[11px] font-semibold text-indigo-600">{qpFiles.length} પાના પસંદ</span>
+                  <span className="text-[11px] font-semibold text-indigo-600">{qpFiles.length} પસંદ</span>
                 </div>
                 <input
                   type="file"
                   multiple
-                  accept="image/*"
+                  accept="application/pdf,image/*"
                   onChange={(e) => {
                     const files = Array.from(e.target.files || []);
                     if (files.length > 0) {
                       setQpFiles((prev) => [...prev, ...files]);
-                      setQpPreviews((prev) => [...prev, ...files.map((f) => URL.createObjectURL(f))]);
+                      setQpPreviews((prev) => [
+                        ...prev,
+                        ...files.map((f) => ({
+                          url: URL.createObjectURL(f),
+                          isPdf: f.type === 'application/pdf' || f.name.endsWith('.pdf'),
+                          name: f.name
+                        }))
+                      ]);
                     }
                   }}
                   className="block w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-100 file:text-indigo-800 cursor-pointer"
                 />
                 {qpPreviews.length > 0 && (
                   <div className="flex gap-2 overflow-x-auto py-1">
-                    {qpPreviews.map((url, idx) => (
+                    {qpPreviews.map((item, idx) => (
                       <div key={idx} className="relative group w-14 h-14 border rounded overflow-hidden flex-shrink-0 bg-white">
-                        <img src={url} alt={`QP ${idx + 1}`} className="w-full h-full object-cover" />
+                        {item.isPdf ? (
+                          <div className="w-full h-full flex flex-col items-center justify-center bg-rose-50 text-rose-600 p-1 text-center">
+                            <span className="text-[10px] font-black uppercase">PDF</span>
+                            <span className="text-[8px] truncate max-w-[48px] text-slate-600">{item.name}</span>
+                          </div>
+                        ) : (
+                          <img src={item.url || item} alt={`QP ${idx + 1}`} className="w-full h-full object-cover" />
+                        )}
                         <button
                           type="button"
                           onClick={() => {
                             setQpFiles((p) => p.filter((_, i) => i !== idx));
                             setQpPreviews((p) => p.filter((_, i) => i !== idx));
                           }}
-                          className="absolute top-0.5 right-0.5 bg-rose-600 text-white rounded-full w-3.5 h-3.5 flex items-center justify-center text-[10px]"
+                          className="absolute top-0.5 right-0.5 bg-rose-600 text-white rounded-full w-3.5 h-3.5 flex items-center justify-center text-[10px] cursor-pointer"
                         >
                           ✕
                         </button>
@@ -529,33 +522,47 @@ export default function App() {
                   <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
                     <KeyRound className="w-4 h-4 text-emerald-600" /> ૨. આદર્શ ઉત્તરવહી / આન્સર-કી (Answer Key)
                   </span>
-                  <span className="text-[11px] font-semibold text-emerald-600">{akFiles.length} પાના પસંદ</span>
+                  <span className="text-[11px] font-semibold text-emerald-600">{akFiles.length} પસંદ</span>
                 </div>
                 <input
                   type="file"
                   multiple
-                  accept="image/*"
+                  accept="application/pdf,image/*"
                   onChange={(e) => {
                     const files = Array.from(e.target.files || []);
                     if (files.length > 0) {
                       setAkFiles((prev) => [...prev, ...files]);
-                      setAkPreviews((prev) => [...prev, ...files.map((f) => URL.createObjectURL(f))]);
+                      setAkPreviews((prev) => [
+                        ...prev,
+                        ...files.map((f) => ({
+                          url: URL.createObjectURL(f),
+                          isPdf: f.type === 'application/pdf' || f.name.endsWith('.pdf'),
+                          name: f.name
+                        }))
+                      ]);
                     }
                   }}
                   className="block w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-100 file:text-emerald-800 cursor-pointer"
                 />
                 {akPreviews.length > 0 && (
                   <div className="flex gap-2 overflow-x-auto py-1">
-                    {akPreviews.map((url, idx) => (
+                    {akPreviews.map((item, idx) => (
                       <div key={idx} className="relative group w-14 h-14 border rounded overflow-hidden flex-shrink-0 bg-white">
-                        <img src={url} alt={`AK ${idx + 1}`} className="w-full h-full object-cover" />
+                        {item.isPdf ? (
+                          <div className="w-full h-full flex flex-col items-center justify-center bg-rose-50 text-rose-600 p-1 text-center">
+                            <span className="text-[10px] font-black uppercase">PDF</span>
+                            <span className="text-[8px] truncate max-w-[48px] text-slate-600">{item.name}</span>
+                          </div>
+                        ) : (
+                          <img src={item.url || item} alt={`AK ${idx + 1}`} className="w-full h-full object-cover" />
+                        )}
                         <button
                           type="button"
                           onClick={() => {
                             setAkFiles((p) => p.filter((_, i) => i !== idx));
                             setAkPreviews((p) => p.filter((_, i) => i !== idx));
                           }}
-                          className="absolute top-0.5 right-0.5 bg-rose-600 text-white rounded-full w-3.5 h-3.5 flex items-center justify-center text-[10px]"
+                          className="absolute top-0.5 right-0.5 bg-rose-600 text-white rounded-full w-3.5 h-3.5 flex items-center justify-center text-[10px] cursor-pointer"
                         >
                           ✕
                         </button>
@@ -571,41 +578,55 @@ export default function App() {
                   <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
                     <Images className="w-4 h-4 text-amber-600" /> ૩. વિદ્યાર્થીની સપ્લીમેન્ટરી (Student Supplementary)
                   </span>
-                  <span className="text-[11px] font-semibold text-amber-700">{suppFiles.length} પાના પસંદ</span>
+                  <span className="text-[11px] font-semibold text-amber-700">{suppFiles.length} પસંદ</span>
                 </div>
                 <input
                   type="file"
                   multiple
-                  accept="image/*"
+                  accept="application/pdf,image/*"
                   onChange={(e) => {
                     const files = Array.from(e.target.files || []);
                     if (files.length > 0) {
                       setSuppFiles((prev) => [...prev, ...files]);
-                      setSuppPreviews((prev) => [...prev, ...files.map((f) => URL.createObjectURL(f))]);
+                      setSuppPreviews((prev) => [
+                        ...prev,
+                        ...files.map((f) => ({
+                          url: URL.createObjectURL(f),
+                          isPdf: f.type === 'application/pdf' || f.name.endsWith('.pdf'),
+                          name: f.name
+                        }))
+                      ]);
                     }
                   }}
                   className="block w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-amber-100 file:text-amber-800 cursor-pointer"
                 />
                 {suppPreviews.length > 0 && (
                   <div className="flex gap-2 overflow-x-auto py-1">
-                    {suppPreviews.map((url, idx) => (
+                    {suppPreviews.map((item, idx) => (
                       <div key={idx} className="relative group w-14 h-14 border rounded overflow-hidden flex-shrink-0 bg-white">
-                        <img src={url} alt={`Supp ${idx + 1}`} className="w-full h-full object-cover" />
-                        <span className="absolute bottom-0 left-0 bg-black/70 text-white text-[8px] px-1">P{idx + 1}</span>
+                        {item.isPdf ? (
+                          <div className="w-full h-full flex flex-col items-center justify-center bg-rose-50 text-rose-600 p-1 text-center">
+                            <span className="text-[10px] font-black uppercase">PDF</span>
+                            <span className="text-[8px] truncate max-w-[48px] text-slate-600">{item.name}</span>
+                          </div>
+                        ) : (
+                          <img src={item.url || item} alt={`Supp ${idx + 1}`} className="w-full h-full object-cover" />
+                        )}
+                        <span className="absolute bottom-0 left-0 bg-black/70 text-white text-[8px] px-1 font-bold">P{idx + 1}</span>
                         <button
                           type="button"
                           onClick={() => {
                             setSuppFiles((p) => p.filter((_, i) => i !== idx));
                             setSuppPreviews((p) => p.filter((_, i) => i !== idx));
                           }}
-                          className="absolute top-0.5 right-0.5 bg-rose-600 text-white rounded-full w-3.5 h-3.5 flex items-center justify-center text-[10px]"
+                          className="absolute top-0.5 right-0.5 bg-rose-600 text-white rounded-full w-3.5 h-3.5 flex items-center justify-center text-[10px] cursor-pointer"
                         >
                           ✕
                         </button>
                       </div>
                     ))}
                   </div>
-                )}
+                )}  
               </div>
 
               <button
@@ -640,7 +661,7 @@ export default function App() {
               {!evalResult && !autoLoading && (
                 <div className="text-center py-40 text-slate-400">
                   <BookOpen className="w-12 h-12 mx-auto mb-2 opacity-30 text-indigo-400" />
-                  પ્રશ્નપત્ર, આન્સર-કી અને સપ્લીમેન્ટરીના ફોટા અપલોડ કરીને મૂલ્યાંકન શરૂ કરો.
+                  પ્રશ્નપત્ર, આન્સર-કી અને સપ્લીમેન્ટરીના ફોટા અથવા PDF અપલોડ કરીને મૂલ્યાંકન શરૂ કરો.
                 </div>
               )}
 
@@ -740,14 +761,13 @@ export default function App() {
                     <span className="text-xs font-bold text-slate-600">મૂળ પાના તપાસો:</span>
                     {(evalResult.pages_urls && evalResult.pages_urls.length > 0
                       ? evalResult.pages_urls
-                      : suppPreviews
+                      : suppPreviews.map((p) => p.url)
                     ).map((pageUrl, i) => (
                       <button
                         key={i}
                         type="button"
                         onClick={() => {
-                          const target = pageUrl || suppPreviews[i];
-                          if (target) setSelectedImageModal(target);
+                          if (pageUrl) setSelectedImageModal(pageUrl);
                         }}
                         className="text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-2.5 py-1 rounded-lg inline-flex items-center gap-1 font-semibold cursor-pointer transition shadow-xs"
                       >
@@ -832,10 +852,10 @@ export default function App() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">આન્સર-શીટ (ફોટો)</label>
+                <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">આન્સર-શીટ (ફોટો અથવા PDF)</label>
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="application/pdf,image/*"
                   onChange={(e) => {
                     const f = e.target.files[0];
                     if (f) {
@@ -849,7 +869,13 @@ export default function App() {
 
               {previewUrl && (
                 <div className="mt-2">
-                  <img src={previewUrl} alt="Paper Preview" className="max-h-36 rounded-lg border object-contain mx-auto" />
+                  {imageFile?.type === 'application/pdf' || imageFile?.name?.endsWith('.pdf') ? (
+                    <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-xs font-bold text-center">
+                      PDF ફાઇલ પસંદ કરેલ છે: {imageFile.name}
+                    </div>
+                  ) : (
+                    <img src={previewUrl} alt="Paper Preview" className="max-h-36 rounded-lg border object-contain mx-auto" />
+                  )}
                 </div>
               )}
 
@@ -956,65 +982,172 @@ export default function App() {
         {/* --- 3. Batch Mode Tab --- */}
         {activeTab === 'batch' && isTeacherOrAdmin && (
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-6">
-            <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
-              <Layers className="w-5 h-5 text-indigo-600" /> આખા ક્લાસ માટે બેચ પેપર મૂલ્યાંકન
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="border-b pb-3 flex justify-between items-center">
               <div>
-                <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">પ્રશ્ન</label>
-                <textarea
-                  className="w-full border rounded-lg p-2 text-sm"
-                  rows={3}
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                />
+                <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-indigo-600" /> આખા ક્લાસ માટે બલ્ક ઓટો-મૂલ્યાંકન (Batch Mode)
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  પ્રશ્નપત્ર અને આન્સર-કી ૧ જ વાર અપલોડ કરો અને આખા ક્લાસના પેપર્સ (PDF અથવા Images) એકસાથે ચેક કરો.
+                </p>
               </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">મોડેલ આન્સર</label>
-                <textarea
-                  className="w-full border rounded-lg p-2 text-sm"
-                  rows={3}
-                  value={modelAnswer}
-                  onChange={(e) => setModelAnswer(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">બધા પેપર પસંદ કરો</label>
+              <div className="flex gap-2">
                 <input
-                  type="file"
-                  multiple
-                  accept="image/*"
-                  onChange={(e) => setBatchFiles(Array.from(e.target.files))}
-                  className="block w-full text-xs text-slate-500 file:mr-2 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 mb-3"
+                  type="text"
+                  placeholder="પરીક્ષાનું નામ"
+                  className="border rounded-lg px-2.5 py-1 text-xs outline-none"
+                  value={batchExamTitle}
+                  onChange={(e) => setBatchExamTitle(e.target.value)}
                 />
-                <button
-                  onClick={handleBatchEvaluate}
-                  disabled={batchLoading || batchFiles.length === 0}
-                  className="w-full bg-indigo-600 text-white text-sm font-semibold py-2.5 rounded-lg hover:bg-indigo-700 transition disabled:bg-slate-300 cursor-pointer"
-                >
-                  {batchLoading ? `પેપર્સ ચકાસી રહ્યું છે (${batchFiles.length})...` : `બધા (${batchFiles.length}) પેપર તપાસો`}
-                </button>
+                <input
+                  type="text"
+                  placeholder="વિષય"
+                  className="border rounded-lg px-2.5 py-1 text-xs outline-none"
+                  value={batchSubject}
+                  onChange={(e) => setBatchSubject(e.target.value)}
+                />
               </div>
             </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* 1. Master QP */}
+              <div className="p-4 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-2">
+                <label className="block text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                  <FileQuestion className="w-4 h-4 text-indigo-600" /> ૧. માસ્ટર પ્રશ્નપત્ર (૧ વાર)
+                </label>
+                <input
+                  type="file"
+                  multiple
+                  accept="application/pdf,image/*"
+                  onChange={(e) => setBatchQpFiles(Array.from(e.target.files || []))}
+                  className="block w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-2.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-100 file:text-indigo-800 cursor-pointer"
+                />
+                <p className="text-[11px] text-indigo-600 font-semibold">{batchQpFiles.length} પસંદ</p>
+              </div>
+
+              {/* 2. Master Answer Key */}
+              <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-xl space-y-2">
+                <label className="block text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                  <KeyRound className="w-4 h-4 text-emerald-600" /> ૨. માસ્ટર આન્સર-કી (૧ વાર)
+                </label>
+                <input
+                  type="file"
+                  multiple
+                  accept="application/pdf,image/*"
+                  onChange={(e) => setBatchAkFiles(Array.from(e.target.files || []))}
+                  className="block w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-2.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-emerald-100 file:text-emerald-800 cursor-pointer"
+                />
+                <p className="text-[11px] text-emerald-600 font-semibold">{batchAkFiles.length} પસંદ</p>
+              </div>
+
+              {/* 3. All Students Papers */}
+              <div className="p-4 bg-amber-50/50 border border-amber-100 rounded-xl space-y-2">
+                <label className="block text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                  <Images className="w-4 h-4 text-amber-600" /> ૩. બધા વિદ્યાર્થીઓના પેપર્સ (PDF / Images)
+                </label>
+                <input
+                  type="file"
+                  multiple
+                  accept="application/pdf,image/*"
+                  onChange={(e) => setBatchStudentFiles(Array.from(e.target.files || []))}
+                  className="block w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-2.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-amber-100 file:text-amber-800 cursor-pointer"
+                />
+                <p className="text-[11px] text-amber-700 font-semibold">{batchStudentFiles.length} ફાઇલો પસંદ</p>
+              </div>
+            </div>
+
+            <button
+              onClick={async () => {
+                if (batchQpFiles.length === 0 || batchAkFiles.length === 0 || batchStudentFiles.length === 0) {
+                  alert('કૃપા કરીને પ્રશ્નપત્ર, આન્સર-કી અને વિદ્યાર્થીઓના પેપર્સ અપલોડ કરો.');
+                  return;
+                }
+                setBatchLoading(true);
+                setBatchResults([]);
+                const formData = new FormData();
+                batchQpFiles.forEach((f) => formData.append('question_paper_files', f));
+                batchAkFiles.forEach((f) => formData.append('answer_key_files', f));
+                batchStudentFiles.forEach((f) => formData.append('student_files', f));
+                formData.append('exam_title', batchExamTitle);
+                formData.append('subject', batchSubject);
+
+                try {
+                  const res = await fetch('http://localhost:8000/api/evaluate-batch-auto', {
+                    method: 'POST',
+                    headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+                    body: formData,
+                  });
+                  const data = await res.json();
+                  if (data.success) {
+                    setBatchResults(data.data);
+                  } else {
+                    alert('બેચ મૂલ્યાંકન નિષ્ફળ: ' + (data.detail || 'Error'));
+                  }
+                } catch (err) {
+                  alert('સર્વર સાથે સંપર્ક થઈ શક્યો નહીં.');
+                } finally {
+                  setBatchLoading(false);
+                }
+              }}
+              disabled={batchLoading || batchStudentFiles.length === 0}
+              className="w-full bg-indigo-600 text-white text-sm font-semibold py-3 rounded-xl hover:bg-indigo-700 transition disabled:bg-slate-400 cursor-pointer shadow-md flex items-center justify-center gap-2"
+            >
+              {batchLoading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" /> બધા વિદ્યાર્થીઓના પેપર્સ સમાંતર તપાસાઈ રહ્યા છે...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 text-amber-300" /> બધા પેપર એકસાથે ચેક કરો
+                </>
+              )}
+            </button>
+
             {batchResults.length > 0 && (
-              <div className="overflow-x-auto border rounded-xl">
+              <div className="overflow-x-auto border rounded-xl mt-4">
                 <table className="w-full text-left text-sm text-slate-600">
                   <thead className="bg-slate-50 text-slate-800 text-xs font-bold uppercase border-b">
                     <tr>
                       <th className="p-3">રોલ નં</th>
-                      <th className="p-3">મેળવેલા ગુણ</th>
+                      <th className="p-3">વિદ્યાર્થી</th>
+                      <th className="p-3">ગુણ</th>
                       <th className="p-3">સ્ટેટસ</th>
                       <th className="p-3">શિક્ષક ટિપ્પણી</th>
+                      <th className="p-3">પેપર</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y text-xs">
                     {batchResults.map((r, i) => (
                       <tr key={i} className="hover:bg-slate-50">
-                        <td className="p-3 font-semibold text-indigo-700">{r.student_id}</td>
+                        <td className="p-3 font-semibold text-indigo-700">{r.roll_no}</td>
+                        <td className="p-3 font-medium text-slate-800">{r.student_name}</td>
                         <td className="p-3 font-bold">{r.obtained_marks} / {r.max_marks}</td>
                         <td className="p-3 font-bold">{r.evaluation_status}</td>
                         <td className="p-3 text-slate-700">{r.teacher_feedback}</td>
+                        <td className="p-3">
+                          {Array.isArray(r.pages_urls) && r.pages_urls.filter(Boolean).length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {r.pages_urls.filter(Boolean).map((pUrl, pIdx) => (
+                                <button
+                                  key={pIdx}
+                                  type="button"
+                                  onClick={() => setSelectedImageModal(pUrl)}
+                                  className="text-[10px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded font-bold cursor-pointer"
+                                >
+                                  P{pIdx + 1}
+                                </button>
+                              ))}
+                            </div>
+                          ) : r.image_url ? (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedImageModal(r.image_url)}
+                              className="text-indigo-600 hover:underline flex items-center gap-1 font-semibold cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" /> જુઓ
+                            </button>
+                          ) : '-'}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1275,7 +1408,7 @@ export default function App() {
           </div>
         )}
 
-        {/* --- In-App Full Image Modal (Lightbox Viewer) --- */}
+        {/* --- In-App Full Viewer Modal (Lightbox for Images & PDFs) --- */}
         {selectedImageModal && (
           <div 
             className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 transition-all"
@@ -1288,7 +1421,9 @@ export default function App() {
               <div className="flex justify-between items-center pb-3 border-b px-1">
                 <div className="flex items-center gap-2">
                   <BookOpen className="w-4 h-4 text-indigo-600" />
-                  <span className="text-sm font-bold text-slate-800">મૂળ ઉત્તરવહી (Original Answer Sheet Page)</span>
+                  <span className="text-sm font-bold text-slate-800">
+                    {isPdfUrl(selectedImageModal) ? 'મૂળ દસ્તાવેજ (PDF Viewer)' : 'મૂળ ઉત્તરવહી (Original Sheet Image)'}
+                  </span>
                 </div>
                 <button 
                   onClick={() => setSelectedImageModal(null)}
@@ -1297,12 +1432,20 @@ export default function App() {
                   ✕
                 </button>
               </div>
-              <div className="overflow-auto flex-1 p-2 text-center bg-slate-50 rounded-xl my-2">
-                <img 
-                  src={selectedImageModal} 
-                  alt="Original Answer Sheet" 
-                  className="max-h-[78vh] mx-auto object-contain rounded-lg border border-slate-200 shadow-sm" 
-                />
+              <div className="overflow-auto flex-1 p-2 text-center bg-slate-50 rounded-xl my-2 flex items-center justify-center">
+                {isPdfUrl(selectedImageModal) ? (
+                  <iframe 
+                    src={selectedImageModal} 
+                    title="Document PDF Viewer" 
+                    className="w-full h-[78vh] rounded-lg border border-slate-200"
+                  />
+                ) : (
+                  <img 
+                    src={selectedImageModal} 
+                    alt="Original Answer Sheet" 
+                    className="max-h-[78vh] mx-auto object-contain rounded-lg border border-slate-200 shadow-sm" 
+                  />
+                )}
               </div>
             </div>
           </div>

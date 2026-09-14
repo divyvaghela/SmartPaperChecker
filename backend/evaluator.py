@@ -16,25 +16,37 @@ if not api_key:
 client = genai.Client(api_key=api_key)
 
 def quick_compress_image(image_bytes: bytes) -> bytes:
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    if img is None:
-        return image_bytes
-    
-    h, w = img.shape[:2]
-    max_dim = 1000
-    if max(h, w) > max_dim:
-        scale = max_dim / max(h, w)
-        img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    """ઈમેજ હોય તો જ કમ્પ્રેસ કરે છે, પીડીએફ કે બાઈનરી હોય તો એમ જ રાખે છે."""
+    try:
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            return image_bytes
         
-    _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
-    return buffer.tobytes()
+        h, w = img.shape[:2]
+        max_dim = 1000
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+            
+        _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return buffer.tobytes()
+    except Exception:
+        return image_bytes
+
+def _to_genai_part(doc_bytes: bytes) -> types.Part:
+    """PDF અથવા Image ઓળખીને યોગ્ય Gemini Part બનાવે છે."""
+    if doc_bytes.startswith(b"%PDF"):
+        return types.Part.from_bytes(data=doc_bytes, mime_type="application/pdf")
+    else:
+        comp_bytes = quick_compress_image(doc_bytes)
+        return types.Part.from_bytes(data=comp_bytes, mime_type="image/jpeg")
 
 def evaluate_paper(image_bytes: bytes, question: str, model_answer: str, max_marks: float) -> dict:
     compressed_img_bytes = quick_compress_image(image_bytes)
 
     prompt = f"""
-    તમે એક કુશળ શિક્ષક અને પરીક્ષક છો. આપેલી ઇમેજમાં વિદ્યાર્થીએ હાથે લખેલો જવાબ (ગુજરાતી, અંગ્રેજી અથવા મિક્સ) છે.
+    તમે એક કુશળ શિક્ષક અને પરીક્ષક છો. આપેલી ઉત્તરવહીમાં વિદ્યાર્થીએ હાથે લખેલો જવાબ (ગુજરાતી, અંગ્રેજી અથવા મિક્સ) છે.
 
     [પરીક્ષા વિગત]
     - પ્રશ્ન: {question}
@@ -57,7 +69,7 @@ def evaluate_paper(image_bytes: bytes, question: str, model_answer: str, max_mar
     }}
     """
 
-    models_pool = ["gemini-3.6-flash", "gemini-3.1-pro-preview"]    
+    models_pool = ["gemini-3.6-flash", "gemini-3.1-pro-preview"]
     last_err = None
     for model_id in models_pool:
         for attempt in range(2):
@@ -65,17 +77,15 @@ def evaluate_paper(image_bytes: bytes, question: str, model_answer: str, max_mar
                 response = client.models.generate_content(
                     model=model_id,
                     contents=[
-                        types.Part.from_bytes(data=compressed_img_bytes, mime_type="image/jpeg"),
+                        _to_genai_part(compressed_img_bytes),
                         prompt
                     ],
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json"
                     )
                 )
-                
                 if response and response.text:
                     return json.loads(response.text.strip())
-
             except Exception as e:
                 last_err = e
                 err_str = str(e)
@@ -91,7 +101,7 @@ def evaluate_multi_question_paper(image_bytes: bytes, questions_payload: list) -
     compressed_img_bytes = quick_compress_image(image_bytes)
 
     prompt = f"""
-    તમે એક તટસ્થ અને અનુભવી પરીક્ષક છો. વિદ્યાર્થીની આપેલી ઉત્તરવહીની ઇમેજમાં એકથી વધુ પ્રશ્નોના જવાબો લખેલા છે.
+    તમે એક તટસ્થ અને અનુભવી પરીક્ષક છો. વિદ્યાર્થીની આપેલી ઉત્તરવહીમાં એકથી વધુ પ્રશ્નોના જવાબો લખેલા છે.
 
     [પરીક્ષાના તમામ પ્રશ્નો અને મોડેલ આન્સર-કી]
     {json.dumps(questions_payload, ensure_ascii=False, indent=2)}
@@ -132,7 +142,7 @@ def evaluate_multi_question_paper(image_bytes: bytes, questions_payload: list) -
                 response = client.models.generate_content(
                     model=model_id,
                     contents=[
-                        types.Part.from_bytes(data=compressed_img_bytes, mime_type="image/jpeg"),
+                        _to_genai_part(compressed_img_bytes),
                         prompt
                     ],
                     config=types.GenerateContentConfig(
@@ -172,20 +182,12 @@ def evaluate_multi_question_paper(image_bytes: bytes, questions_payload: list) -
     }
 
 def evaluate_supplementary_exam(images_bytes_list: list[bytes], exam_payload: dict) -> dict:
-    """
-    મલ્ટી-પેજ સપ્લીમેન્ટરી અને આડાઅવળા લખેલા જવાબોનું મૂલ્યાંકન
-    """
-    compressed_parts = []
-    for img_b in images_bytes_list:
-        comp_b = quick_compress_image(img_b)
-        compressed_parts.append(types.Part.from_bytes(data=comp_b, mime_type="image/jpeg"))
-
     prompt = f"""
 તમે યુનિવર્સિટી કક્ષાના મુખ્ય પરીક્ષક (Head Academic Examiner) છો.
 વિદ્યાર્થીએ એક કે તેથી વધુ પાનાની સપ્લીમેન્ટરી (ઉત્તરવહી) માં જવાબો લખેલા છે.
 
 [મહત્વપૂર્ણ નિયમો]:
-1. વિદ્યાર્થીએ જવાબો આડાઅવળા (દા.ત. પહેલાં Q3, પછી Q1, અથવા Section B પહેલાં) લખ્યા હોઈ શકે છે.
+1. વિદ્યાર્થીએ જવાબો આડાઅવળા લખ્યા હોઈ શકે છે.
 2. એક જ પ્રશ્નનો જવાબ બે પાના વચ્ચે ફેલાયેલો પણ હોઈ શકે છે.
 3. તમામ પાનાનું ધ્યાનથી નિરીક્ષણ કરીને નક્કી કરો કે કયો જવાબ કયા પ્રશ્નનો છે.
 4. પ્રશ્નપત્રમાં દર્શાવેલા દરેક પ્રશ્નનું સાચા મોડેલ આન્સર સાથે સ્વતંત્ર મૂલ્યાંકન કરો. જો ઉત્તરવહીમાં ક્યાંય જવાબ ન મળે તો જ 0 ગુણ આપવા.
@@ -221,13 +223,16 @@ def evaluate_supplementary_exam(images_bytes_list: list[bytes], exam_payload: di
 }}
 """
 
+    contents = [prompt]
+    for b in images_bytes_list:
+        contents.append(_to_genai_part(b))
+
     models_pool = ["gemini-3.6-flash", "gemini-3.1-pro-preview"]
     last_err = None
 
     for model_id in models_pool:
         for attempt in range(2):
             try:
-                contents = [prompt] + compressed_parts
                 response = client.models.generate_content(
                     model=model_id,
                     contents=contents,
@@ -255,7 +260,7 @@ def evaluate_auto_extracted_exam(
     subject: str = "General"
 ) -> dict:
     """
-    પ્રશ્નપત્ર, આન્સર કી અને સપ્લીમેન્ટરી ત્રણેયના ફોટા સ્કેન કરીને સીધું મૂલ્યાંકન કરે છે.
+    પ્રશ્નપત્ર, આન્સર કી અને સપ્લીમેન્ટરી (Image અથવા PDF) ત્રણેય સ્કેન કરીને ઓટોમેટિક મૂલ્યાંકન કરે છે.
     """
     contents = []
 
@@ -263,7 +268,7 @@ def evaluate_auto_extracted_exam(
 તમે એક અનુભવી મુખ્ય પરીક્ષક છો. તમારી પાસે નીચે મુજબના દસ્તાવેજો છે:
 1. [પ્રશ્નપત્ર - Question Paper]: પરીક્ષાના પ્રશ્નો, સેક્શન્સ અને દરેક પ્રશ્નના ગુણ.
 2. [આદર્શ ઉત્તરવહી - Model Answer Key]: સાચા જવાબો અને મૂલ્યાંકનના માપદંડ.
-3. [વિદ્યાર્થીની ઉત્તરવહી - Student Supplementary]: વિદ્યાર્થીએ હાથે લખેલા જવાબો (આડાઅવળા પણ હોઈ શકે).
+3. [વિદ્યાર્થીની ઉત્તરવહી - Student Supplementary]: વિદ્યાર્થીએ હાથે લખેલા જવાબો (Single/Multi-page Image અથવા PDF).
 
 [પરીક્ષા વિગત]:
 - શીર્ષક: {exam_title}
@@ -291,7 +296,7 @@ def evaluate_auto_extracted_exam(
           "max_marks": 2.0,
           "obtained_marks": 2.0,
           "page_reference": "Page 1",
-          "student_answer_snippet": "વિદ્યાર્થીએ લખેલો જવાબ",
+          "student_answer_snippet": "વિદ્યાર્થીએ લખेलो જવાબ",
           "status": "CORRECT",
           "feedback": "પ્રશ્નવાર ટૂંકી સમીક્ષા",
           "missing_points": []
@@ -303,23 +308,17 @@ def evaluate_auto_extracted_exam(
 """
     contents.append(prompt)
 
-    # 1. પ્રશ્નપત્ર ઉમેરો
     contents.append("--- [Question Paper Pages Below] ---")
     for b in question_paper_bytes_list:
-        comp_b = quick_compress_image(b)
-        contents.append(types.Part.from_bytes(data=comp_b, mime_type="image/jpeg"))
+        contents.append(_to_genai_part(b))
 
-    # 2. આન્સર કી ઉમેરો
     contents.append("--- [Model Answer Key Pages Below] ---")
     for b in answer_key_bytes_list:
-        comp_b = quick_compress_image(b)
-        contents.append(types.Part.from_bytes(data=comp_b, mime_type="image/jpeg"))
+        contents.append(_to_genai_part(b))
 
-    # 3. વિદ્યાર્થીની સપ્લીમેન્ટરી ઉમેરો
     contents.append("--- [Student Supplementary Pages Below] ---")
     for b in student_supplementary_bytes_list:
-        comp_b = quick_compress_image(b)
-        contents.append(types.Part.from_bytes(data=comp_b, mime_type="image/jpeg"))
+        contents.append(_to_genai_part(b))
 
     models_pool = ["gemini-3.6-flash", "gemini-3.1-pro-preview"]
     last_err = None

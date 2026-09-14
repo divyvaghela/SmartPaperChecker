@@ -3,10 +3,11 @@ import {
   Upload, Award, FileText, Download, Layers, 
   UserCheck, BarChart3, Clock, RefreshCw, Edit3, 
   LogIn, LogOut, User, Lock, Mail, 
-  BookOpen, Images, Eye, FileQuestion, KeyRound, Sparkles
+  BookOpen, Images, Eye, FileQuestion, KeyRound, Sparkles, Building2
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { toPng } from 'html-to-image';
+import ImageToPdfModal from './ImageToPdfModal';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('supplementary');
@@ -37,6 +38,8 @@ export default function App() {
   const [studentName, setStudentName] = useState('Rahul Sharma');
   const [rollNo, setRollNo] = useState('101');
 
+  const [pdfConverterOpen, setPdfConverterOpen] = useState(false);
+
   // --- 3-Way Auto Upload States (Zero-Typing Mode) ---
   const [qpFiles, setQpFiles] = useState([]);
   const [qpPreviews, setQpPreviews] = useState([]);
@@ -66,7 +69,6 @@ export default function App() {
   const [verifyLoading, setVerifyLoading] = useState(false);
 
   // --- Batch mode state ---
-  const [batchFiles, setBatchFiles] = useState([]);
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchResults, setBatchResults] = useState([]);
 
@@ -74,6 +76,14 @@ export default function App() {
   const [analytics, setAnalytics] = useState(null);
   const [submissions, setSubmissions] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // --- SaaS Master Admin & Tenant State ---
+  const [institutionsList, setInstitutionsList] = useState([]);
+  const [newInstForm, setNewInstForm] = useState({ name: '', code: '', adminEmail: '', subscriptionPlan: 'BASIC' });
+  const [activeInstitution, setActiveInstitution] = useState(() => {
+    const saved = localStorage.getItem('paper_checker_institution');
+    return saved ? JSON.parse(saved) : { code: 'gtu', name: 'Gujarat University' };
+  });
 
   const reportRef = useRef(null);
   const suppReportRef = useRef(null);
@@ -83,6 +93,59 @@ export default function App() {
   const [batchStudentFiles, setBatchStudentFiles] = useState([]);
   const [batchExamTitle, setBatchExamTitle] = useState('Mid-Term Examination 2026');
   const [batchSubject, setBatchSubject] = useState('Computer Science');
+
+  // --- Helper for Tenant-Aware Fetch ---
+  const fetchWithTenant = async (url, options = {}) => {
+    const headers = {
+      'x-institution-code': activeInstitution.code,
+      ...(options.headers || {})
+    };
+    return fetch(url, { ...options, headers });
+  };
+
+  // --- SaaS Master Admin Fetchers ---
+  const fetchInstitutions = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/institutions');
+      const data = await res.json();
+      setInstitutionsList(data || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'saas_admin') {
+      fetchInstitutions();
+    }
+  }, [activeTab]);
+
+  const handleRegisterInstitution = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('http://localhost:5000/api/institutions/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newInstForm)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert('Institution registered successfully!');
+        fetchInstitutions();
+        setNewInstForm({ name: '', code: '', adminEmail: '', subscriptionPlan: 'BASIC' });
+      } else {
+        alert(data.message || 'Registration failed');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleInstitutionSwitch = (inst) => {
+    setActiveInstitution(inst);
+    localStorage.setItem('paper_checker_institution', JSON.stringify(inst));
+    window.location.reload();
+  };
 
   // --- Auth Handlers ---
   const handleAuthSubmit = async (e) => {
@@ -141,8 +204,8 @@ export default function App() {
     setHistoryLoading(true);
     try {
       const [analyticsRes, submissionsRes] = await Promise.all([
-        fetch('http://localhost:8000/api/analytics'),
-        fetch('http://localhost:8000/api/submissions')
+        fetchWithTenant('http://localhost:8000/api/analytics'),
+        fetchWithTenant('http://localhost:8000/api/submissions')
       ]);
 
       const analyticsData = await analyticsRes.json();
@@ -201,7 +264,7 @@ export default function App() {
     formData.append('exam_title', examTitle);
 
     try {
-      const res = await fetch('http://localhost:8000/api/evaluate-auto-upload', {
+      const res = await fetchWithTenant('http://localhost:8000/api/evaluate-auto-upload', {
         method: 'POST',
         headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         body: formData
@@ -258,7 +321,7 @@ export default function App() {
     formData.append('max_marks', maxMarks);
 
     try {
-      const response = await fetch('http://localhost:8000/api/evaluate', {
+      const response = await fetchWithTenant('http://localhost:8000/api/evaluate', {
         method: 'POST',
         headers: token ? { 'Authorization': `Bearer ${token}` } : {},
         body: formData,
@@ -288,7 +351,7 @@ export default function App() {
     const computedStatus = marksNum >= parseFloat(maxMarks) ? 'CORRECT' : marksNum > 0 ? 'PARTIAL' : 'INCORRECT';
 
     try {
-      const response = await fetch('http://localhost:8000/api/submissions/verify', {
+      const response = await fetchWithTenant('http://localhost:8000/api/submissions/verify', {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -333,7 +396,7 @@ export default function App() {
         <header className="mb-6 border-b border-slate-200 pb-4 flex flex-col md:flex-row justify-between items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold text-indigo-700">SmartPaperChecker</h1>
-            <p className="text-sm text-slate-500">મલ્ટિલિંગ્યુઅલ (ગુજરાતી / ઇંગ્લિશ) AI પરીક્ષા મૂલ્યાંકન & ERP સિસ્ટમ</p>
+            <p className="text-sm text-slate-500">મલ્ટિલિંગ્યુઅલ (ગુજરાતી / ઇંગ્લિશ) AI પરીક્ષા મૂલ્યાંકન & ERP SaaS સિસ્ટમ</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -375,6 +438,14 @@ export default function App() {
               >
                 <BarChart3 className="w-4 h-4" /> {currentUser?.role === 'STUDENT' ? 'મારો રિપોર્ટ' : 'એનાલિટિક્સ & હિસ્ટ્રી'}
               </button>
+              <button
+                onClick={() => setActiveTab('saas_admin')}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  activeTab === 'saas_admin' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Building2 className="w-4 h-4 text-indigo-600" /> SaaS Master Admin
+              </button>
             </div>
 
             {/* Auth Profile */}
@@ -404,6 +475,114 @@ export default function App() {
             )}
           </div>
         </header>
+
+        {/* --- SaaS Master Admin Panel Tab --- */}
+        {activeTab === 'saas_admin' && (
+          <div className="space-y-6 bg-white p-6 rounded-2xl border shadow-sm">
+            <div className="border-b pb-3 flex justify-between items-center">
+              <div>
+                <h3 className="text-sm font-black uppercase text-slate-800 tracking-wider">SaaS Master Admin: Tenant Management</h3>
+                <p className="text-xs text-slate-400">Onboard and monitor all subscribed colleges and institutions</p>
+              </div>
+              <div className="bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-xl text-xs font-semibold text-indigo-900">
+                Active Tenant Context: <span className="font-bold uppercase text-indigo-700">{activeInstitution.code}</span>
+              </div>
+            </div>
+
+            {/* Onboard New Institution Form */}
+            <form onSubmit={handleRegisterInstitution} className="bg-slate-50 p-4 rounded-xl border grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-600 mb-1">Institution Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Gujarat University"
+                  value={newInstForm.name}
+                  onChange={e => setNewInstForm({...newInstForm, name: e.target.value})}
+                  className="w-full border p-2 rounded-lg bg-white font-bold"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block font-bold text-slate-600 mb-1">Unique Code</label>
+                <input
+                  type="text"
+                  placeholder="e.g. gtu"
+                  value={newInstForm.code}
+                  onChange={e => setNewInstForm({...newInstForm, code: e.target.value})}
+                  className="w-full border p-2 rounded-lg bg-white font-bold uppercase"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block font-bold text-slate-600 mb-1">Admin Email</label>
+                <input
+                  type="email"
+                  placeholder="admin@college.edu"
+                  value={newInstForm.adminEmail}
+                  onChange={e => setNewInstForm({...newInstForm, adminEmail: e.target.value})}
+                  className="w-full border p-2 rounded-lg bg-white font-bold"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block font-bold text-slate-600 mb-1">Plan</label>
+                <select
+                  value={newInstForm.subscriptionPlan}
+                  onChange={e => setNewInstForm({...newInstForm, subscriptionPlan: e.target.value})}
+                  className="w-full border p-2 rounded-lg bg-white font-bold"
+                >
+                  <option value="BASIC">BASIC</option>
+                  <option value="PREMIUM">PREMIUM</option>
+                  <option value="ENTERPRISE">ENTERPRISE</option>
+                </select>
+              </div>
+              <div className="md:col-span-4 flex justify-end">
+                <button className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-2 rounded-xl uppercase tracking-wider text-xs cursor-pointer">
+                  + Register New Institution
+                </button>
+              </div>
+            </form>
+
+            {/* Institutions Table */}
+            <div className="border rounded-xl overflow-hidden">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-100 border-b text-slate-600 font-bold uppercase">
+                  <tr>
+                    <th className="p-3">Institution Name</th>
+                    <th className="p-3">Code</th>
+                    <th className="p-3">Admin Email</th>
+                    <th className="p-3">Plan</th>
+                    <th className="p-3">Status</th>
+                    <th className="p-3 text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {institutionsList.length === 0 ? (
+                    <tr><td colSpan={6} className="p-4 text-center text-slate-400">No institutions registered yet.</td></tr>
+                  ) : (
+                    institutionsList.map(inst => (
+                      <tr key={inst._id} className="hover:bg-slate-50 font-medium">
+                        <td className="p-3 font-bold text-slate-800">{inst.name}</td>
+                        <td className="p-3 uppercase text-indigo-600 font-bold">{inst.code}</td>
+                        <td className="p-3 text-slate-600">{inst.adminEmail}</td>
+                        <td className="p-3"><span className="bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-bold">{inst.subscriptionPlan}</span></td>
+                        <td className="p-3"><span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold">{inst.status}</span></td>
+                        <td className="p-3 text-center">
+                          <button
+                            onClick={() => handleInstitutionSwitch(inst)}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded-lg font-bold text-[10px] cursor-pointer"
+                          >
+                            Switch Tenant
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* --- 1. Zero-Typing 3-Way Auto Upload Mode --- */}
         {activeTab === 'supplementary' && isTeacherOrAdmin && (
@@ -578,7 +757,16 @@ export default function App() {
                   <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
                     <Images className="w-4 h-4 text-amber-600" /> ૩. વિદ્યાર્થીની સપ્લીમેન્ટરી (Student Supplementary)
                   </span>
-                  <span className="text-[11px] font-semibold text-amber-700">{suppFiles.length} પસંદ</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPdfConverterOpen(true)}
+                      className="text-[11px] bg-amber-100 text-amber-900 hover:bg-amber-200 px-2 py-0.5 rounded-md font-bold transition flex items-center gap-1 cursor-pointer"
+                    >
+                      + ફોટામાંથી PDF બનાવો
+                    </button>
+                    <span className="text-[11px] font-semibold text-amber-700">{suppFiles.length} પસંદ</span>
+                  </div>
                 </div>
                 <input
                   type="file"
@@ -1072,7 +1260,7 @@ export default function App() {
                 formData.append('subject', batchSubject);
 
                 try {
-                  const res = await fetch('http://localhost:8000/api/evaluate-batch-auto', {
+                  const res = await fetchWithTenant('http://localhost:8000/api/evaluate-batch-auto', {
                     method: 'POST',
                     headers: token ? { 'Authorization': `Bearer ${token}` } : {},
                     body: formData,
@@ -1293,7 +1481,7 @@ export default function App() {
               <h2 className="text-xl font-bold text-slate-800 mb-1">
                 {authMode === 'login' ? 'સિસ્ટમ લૉગિન' : 'નવું એકાઉન્ટ રજીસ્ટર કરો'}
               </h2>
-              <p className="text-xs text-slate-500 mb-6">SmartPaperChecker ERP પ્લેટફોર્મ એક્સેસ કરો</p>
+              <p className="text-xs text-slate-500 mb-6">SmartPaperChecker SaaS ERP પ્લેટફોર્મ એક્સેસ કરો</p>
 
               <form onSubmit={handleAuthSubmit} className="space-y-4">
                 {authMode === 'register' && (
@@ -1451,7 +1639,22 @@ export default function App() {
           </div>
         )}
 
+        {/* --- Image to PDF Generator Modal --- */}
+        <ImageToPdfModal
+          isOpen={pdfConverterOpen}
+          onClose={() => setPdfConverterOpen(false)}
+          defaultFileName={`${rollNo || '101'}_${studentName.replace(/\s+/g, '_')}_Sheet.pdf`}
+          onPdfGenerated={(pdfFile) => {
+            setSuppFiles([pdfFile]);
+            setSuppPreviews([{
+              url: URL.createObjectURL(pdfFile),
+              isPdf: true,
+              name: pdfFile.name
+            }]);
+          }}
+        />
+
       </div>
-    </div>
+    </div>     
   );
 }

@@ -1510,7 +1510,7 @@ export default function App() {
                       >
                         <option value="TEACHER">શિક્ષક (Teacher / Evaluator)</option>
                         <option value="ADMIN">એડમિન / પ્રિન્સિપાલ (Admin)</option>
-                        <option value="STUDENT">વિદ્યાર્થી (Student)</option>
+                        <option value="STUDENT you">વિદ્યાર્થી (Student)</option>
                       </select>
                     </div>
 

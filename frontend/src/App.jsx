@@ -1624,7 +1624,7 @@ export default function App() {
                 {isPdfUrl(selectedImageModal) ? (
                   <iframe 
                     src={selectedImageModal} 
-                    title="Document PDF Viewer" 
+                    title="Document PDFF Viewer" 
                     className="w-full h-[78vh] rounded-lg border border-slate-200"
                   />
                 ) : (
